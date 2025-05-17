@@ -1,0 +1,131 @@
+
+;; Criação de classes
+breed [operarias operaria]
+breed [ soldados soldado ]
+breed [ rainhas rainha ]
+
+globals [ rainha-principal ]
+operarias-own [ energia carregando ]
+soldados-own [ forca ]
+rainhas-own [ filhos fertilidade ]
+
+
+to setup
+  clear-all
+  
+  let quantidade-verdes 10 ;; Quantidade de comida geradas em grupo
+  let raio 3			   ;; raio do grupo de comida
+
+  ask n-of quantidade-verdes patches [
+    ask patches in-radius raio [
+      set pcolor green
+    ]
+	]
+
+  ;; Gerar alguns opstáculos testes	
+  ask patches with [ random-float 1 < 0.005 ] [
+    set pcolor yellow
+  ]
+
+  ;; Configurando as formigas operárias
+  create-operarias 50 [
+    set color red
+    setxy random-xcor random-ycor
+    set energia 90
+    set carregando false
+  ]
+
+  ;; Configurando as formigas soldados
+  create-soldados 10 [
+    set color blue
+    set forca 10
+    setxy random-xcor random ycor
+  ]
+
+  ;; Configurando a rainha
+  create-rainhas 1 [
+    set color white
+    setxy 0 0
+    set filhos 0
+    set fertilidade 1
+  ]
+  
+  set rainha-principal one-of rainhas   ;; Localizar a rainha pois futuramente queremos que as formigas manipule seus dados com ela
+  
+  reset-ticks
+end
+
+to go
+  ask operarias [
+    ifelse carregando = false [    ;; Se não estiver carregando alimento
+      ;; buscar comida (func)
+      ifelse pcolor = green [
+        set energia energia + 3
+        set carregando true
+        set pcolor brown
+      ]  [
+        ;; if pcolor = yellow [ rt 180 fd 1 ]   ;; Desviar dos obtáculos
+        rt random 20
+        lt random 20
+        fd 1
+      ]
+    ]  [
+      ;; voltar para rainha
+      if rainha-principal != nobody [
+        face rainha-principal
+        fd 1
+        
+        if distance rainha-principal < 2 [			;; Se tiver em um raio de 2 próximo da rainha pode considerar a comida emtregue
+          set carregando false
+          ;; comida entregue aqui
+        ]
+      ]
+    ]
+
+    set energia energia - 1
+ 	  if energia <= 0 [ die ]
+  ]
+
+    
+   ask soldados [
+     if any? operarias in-radius 2 [
+       let inimigo one-of turtles with [ color = red ] in-radius 5
+       if inimigo != nobody [		 ;; Aprimorar: se é alidado ou não
+         ;ask inimigo [ die ]
+         set forca forca - 1
+
+         ;; if aliado == (func protejer)  else (func combate)
+       ]
+       
+       rt random 60
+       rt random 60
+       fd 1
+     ]
+  ]
+  
+  ask rainhas [
+    if ticks mod 100 = 0 [
+    
+      let resultado max list 1 (floor (fertilidade / 3))			;; Manipulando o quanto a fertilidade vai impactar na geração de outras formigas
+      
+      hatch-operarias resultado [									;; Filhas da respectiva rainha
+        set color red
+       	setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
+        set energia 100
+      ]
+      set filhos filhos + 1
+  	]
+    if any? operarias with [ carregando = true ] in-radius 4 [	    ;; A rainha vai pegar a comida em um raio de 4. Se fosse 2 a operária ia primeira ficar como False depois vinha para essa função, o qual daria errado e não adcionaria nada
+      set fertilidade fertilidade + 1
+    ]
+  ]
+
+ 	;; Dados para serem plotados
+ 	if rainha-principal != nobody [
+    set-current-plot "Fertilidade da Rainha"
+    plot [fertilidade] of rainha-principal
+  ]
+    set-current-plot "Total de Operarias"
+  	plot count operarias
+  tick
+end
