@@ -1,5 +1,4 @@
-```markdown
-# README - Projeto de IA: Simulação de Colônia de Formigas
+Projeto de IA: Simulação de Colônia de Formigas
 
 **Objetivo do Projeto**:  
 Criar uma simulação de colônias de formigas com comportamentos adaptativos (Q-learning), combates estratégicos e dinâmica ambiental.  
