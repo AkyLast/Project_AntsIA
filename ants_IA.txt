@@ -1,18 +1,31 @@
-
 ;; Criação de classes
 breed [operarias operaria]
 breed [ soldados soldado ]
 breed [ rainhas rainha ]
 
-globals [ rainha-principal ]
-operarias-own [ energia carregando ]
-soldados-own [ forca ]
+globals [
+  rainha-principal  ;; referência à rainha principal
+  colony-id-counter ;; contador para gerar IDs de colônia
+]
+
+turtles-own [
+  colony-id    ;; identificador da colônia
+  role         ;; "operaria", "soldado" ou "rainha"
+  health       ;; pontos de vida
+  energy       ;; energia disponível (para mover, lutar etc.)
+  attack       ;; poder de ataque
+  state        ;; "searching", "carrying", "attacking", "fleeing", "idle"
+]
+
+operarias-own [ carregando ]
+soldados-own [ target ]
 rainhas-own [ filhos fertilidade ]
 
 
 to setup
   clear-all
-  
+  set colony-id-counter 1
+
   let quantidade-verdes 10 ;; Quantidade de comida geradas em grupo
   let raio 3			   ;; raio do grupo de comida
 
@@ -22,7 +35,7 @@ to setup
     ]
 	]
 
-  ;; Gerar alguns opstáculos testes	
+  ;; Gerar alguns obstáculos testes
   ask patches with [ random-float 1 < 0.005 ] [
     set pcolor yellow
   ]
@@ -31,90 +44,181 @@ to setup
   create-operarias 50 [
     set color red
     setxy random-xcor random-ycor
-    set energia 90
+
+    ;; atributos gerais
+    set colony-id colony-id-counter
+    set role "operaria"
+    set health 100
+    set energy 90
+    set attack 1
+    set state "searching"
     set carregando false
   ]
 
   ;; Configurando as formigas soldados
   create-soldados 10 [
     set color blue
-    set forca 10
     setxy random-xcor random ycor
+
+    ;; atributos gerais
+    set colony-id colony-id-counter
+    set role "soldado"
+    set health 120
+    set energy 100
+    set attack 5
+    set state "idle"
+    set target nobody
   ]
 
   ;; Configurando a rainha
   create-rainhas 1 [
     set color white
     setxy 0 0
+
+    ;; atributos gerais
+    set colony-id colony-id-counter
+    set role "rainha"
+    set health 200
+    set energy 200
+    set attack 0
+    set state "idle"
+
+    ;; atributos da rainha
     set filhos 0
     set fertilidade 1
   ]
-  
+
   set rainha-principal one-of rainhas   ;; Localizar a rainha pois futuramente queremos que as formigas manipule seus dados com ela
-  
+
   reset-ticks
 end
 
 to go
+  ;; --- LÓGICA DAS OPERÁRIAS ---
   ask operarias [
-    ifelse carregando = false [    ;; Se não estiver carregando alimento
-      ;; buscar comida (func)
+    ;; gastar energia por tick
+    set energy energy - 1
+ 	  if energy <= 0 [ die ]
+
+    ;; loop de procura de alimento
+    if state = "searching" [
       ifelse pcolor = green [
-        set energia energia + 3
+        ;; encontrou comida
+        set energy min (list 100 (energy + 3))
         set carregando true
+        set state "carrying"
         set pcolor brown
-      ]  [
-        ;; if pcolor = yellow [ rt 180 fd 1 ]   ;; Desviar dos obtáculos
+      ] [
+        ;; procurar comida
         rt random 20
         lt random 20
         fd 1
       ]
-    ]  [
-      ;; voltar para rainha
+    ]
+
+    if state = "carrying" [
+      ;; voltar à rainha
       if rainha-principal != nobody [
         face rainha-principal
         fd 1
-        
-        if distance rainha-principal < 2 [			;; Se tiver em um raio de 2 próximo da rainha pode considerar a comida emtregue
+        if distance rainha-principal < 2 [
+          ;; entrega concluída
           set carregando false
-          ;; comida entregue aqui
+          set state "searching"
+        ]
+      ]
+    ]
+  ]
+
+   ;; --- LÓGICA DOS SOLDADOS COM COMBATE ---
+  ask soldados [
+    ;; gastar energia
+    set energy energy - 1
+    if energy <= 0 [ die ]
+
+    ;; estado de patrulha e busca
+    if state = "idle" [
+      ;; detectar inimigos de outras colônias em raio 5
+      let inimigo one-of turtles with [
+        role != "soldado" and colony-id != [colony-id] of myself
+      ] in-radius 5
+
+      ifelse inimigo != nobody [
+        set target inimigo
+        set state "attacking"
+      ] [
+        ;; patrulhar
+        rt random 60
+        lt random 60
+        fd 1
+      ]
+    ]
+
+    ;; estado de ataque
+    if state = "attacking" [
+      ifelse (target = nobody) or not member? target turtles [
+        ;; alvo perdido
+        set state "idle"
+        set target nobody
+      ] [
+        ;; aproximar e lutar
+        face target
+        fd 1
+        if distance target < 1 [
+          ;; aplicar dano mútuo
+          ask target [
+            set health health - ([attack] of myself)
+            if health <= 0 [ die ]
+          ]
+          set health health - [attack] of target
+          if health <= 0 [ die ]
+
+          ;; decidir fuga se estiver ferido
+          if health < 20 [
+            set state "fleeing"
+          ]
         ]
       ]
     ]
 
-    set energia energia - 1
- 	  if energia <= 0 [ die ]
+    ;; estado de fuga
+    if state = "fleeing" [
+      if target != nobody [
+        rt 180  ;; correr para longe
+        fd 2
+      ]
+      ;; após se afastar, voltar a patrulhar
+      if (target = nobody) or (distance target > 6) [
+        set target nobody
+        set state "idle"
+      ]
+    ]
   ]
 
-    
-   ask soldados [
-     if any? operarias in-radius 2 [
-       let inimigo one-of turtles with [ color = red ] in-radius 5
-       if inimigo != nobody [		 ;; Aprimorar: se é alidado ou não
-         ;ask inimigo [ die ]
-         set forca forca - 1
-
-         ;; if aliado == (func protejer)  else (func combate)
-       ]
-       
-       rt random 60
-       rt random 60
-       fd 1
-     ]
-  ]
-  
+  ;; --- LÓGICA DA RAINHA ---
   ask rainhas [
+
+    ;; gerar operárias periodicamente
     if ticks mod 100 = 0 [
-    
+
       let resultado max list 1 (floor (fertilidade / 3))			;; Manipulando o quanto a fertilidade vai impactar na geração de outras formigas
-      
+
       hatch-operarias resultado [									;; Filhas da respectiva rainha
         set color red
        	setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
-        set energia 100
+
+        ;; atributos gerais herdados
+        set role "operaria"
+        set health 100
+        set energy 100
+        set attack 1
+        set state "searching"
+        set carregando false
       ]
-      set filhos filhos + 1
+      set filhos filhos + resultado
   	]
+
+    ;; aumentar fertilidade se receber comida
     if any? operarias with [ carregando = true ] in-radius 4 [	    ;; A rainha vai pegar a comida em um raio de 4. Se fosse 2 a operária ia primeira ficar como False depois vinha para essa função, o qual daria errado e não adcionaria nada
       set fertilidade fertilidade + 1
     ]
