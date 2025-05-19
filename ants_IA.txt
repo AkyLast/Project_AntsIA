@@ -1,11 +1,17 @@
-;; Criação de classes
+;; ==================== SIMULAÇÃO DE DUAS COLÔNIAS DE FORMIGAS RIVAIS =====================
+;; - Cada colônia possui rainha, operárias e soldados com cores distintas.
+;; - Soldados atacam agentes da colônia rival (inclusive rainha).
+;; - Código modularizado com procedures para cada função principal.
+;; =======================================================================================
+
 breed [operarias operaria]
-breed [ soldados soldado ]
-breed [ rainhas rainha ]
+breed [soldados soldado]
+breed [rainhas rainha]
 
 globals [
-  rainha-principal  ;; referência à rainha principal
-  colony-id-counter ;; contador para gerar IDs de colônia
+  rainha-principal        ;; referência à rainha principal (colônia 1)
+  rainha-rival            ;; referência à rainha rival (colônia 2)
+  colony-id-counter       ;; contador para gerar IDs de colônia
 ]
 
 turtles-own [
@@ -15,38 +21,53 @@ turtles-own [
   energy       ;; energia disponível (para mover, lutar etc.)
   attack       ;; poder de ataque
   state        ;; "searching", "carrying", "attacking", "fleeing", "idle"
+  cor-colonia  ;; cor principal da colônia
 ]
 
 operarias-own [ carregando ]
 soldados-own [ target ]
 rainhas-own [ filhos fertilidade ]
 
-
+;; ========================= SETUP ==========================
 to setup
   clear-all
   set colony-id-counter 1
 
-  let quantidade-verdes 10 ;; Quantidade de comida geradas em grupo
-  let raio 3			   ;; raio do grupo de comida
-
+  ;; Geração de grupos de comida (patches verdes)
+  let quantidade-verdes 10
+  let raio 3
   ask n-of quantidade-verdes patches [
     ask patches in-radius raio [
       set pcolor green
     ]
-	]
+  ]
 
-  ;; Gerar alguns obstáculos testes
+  ;; Geração de obstáculos (patches amarelos)
   ask patches with [ random-float 1 < 0.005 ] [
     set pcolor yellow
   ]
 
-  ;; Configurando as formigas operárias
-  create-operarias 50 [
-    set color red
-    setxy random-xcor random-ycor
+  ;; Colônia 1 (canto inferior esquerdo)
+  create-rainhas 1 [
+    set color white
+    set cor-colonia white
+    setxy min-pxcor + 2 min-pycor + 2
+    set colony-id 1
+    set role "rainha"
+    set health 600
+    set energy 600
+    set attack 0
+    set state "idle"
+    set filhos 0
+    set fertilidade 1
+  ]
+  set rainha-principal one-of rainhas with [colony-id = 1]
 
-    ;; atributos gerais
-    set colony-id colony-id-counter
+  create-operarias 25 [
+    set color red
+    set cor-colonia red
+    setxy (min-pxcor + 2 + random 4) (min-pycor + 2 + random 4)
+    set colony-id 1
     set role "operaria"
     set health 300
     set energy 270
@@ -55,13 +76,11 @@ to setup
     set carregando false
   ]
 
-  ;; Configurando as formigas soldados
-  create-soldados 10 [
+  create-soldados 5 [
     set color blue
-    setxy random-xcor random ycor
-
-    ;; atributos gerais
-    set colony-id colony-id-counter
+    set cor-colonia blue
+    setxy (min-pxcor + 2 + random 4) (min-pycor + 2 + random 4)
+    set colony-id 1
     set role "soldado"
     set health 360
     set energy 300
@@ -70,207 +89,271 @@ to setup
     set target nobody
   ]
 
-  ;; Configurando a rainha
+  ;; Colônia 2 (canto superior direito)
   create-rainhas 1 [
-    set color white
-    setxy 0 0
-
-    ;; atributos gerais
-    set colony-id colony-id-counter
+    set color orange + 2
+    set cor-colonia orange + 2
+    setxy max-pxcor - 2 max-pycor - 2
+    set colony-id 2
     set role "rainha"
     set health 600
     set energy 600
     set attack 0
     set state "idle"
-
-    ;; atributos da rainha
     set filhos 0
     set fertilidade 1
   ]
+  set rainha-rival one-of rainhas with [colony-id = 2]
 
-  set rainha-principal one-of rainhas   ;; Localizar a rainha pois futuramente queremos que as formigas manipule seus dados com ela
+  create-operarias 25 [
+    set color green + 2
+    set cor-colonia green + 2
+    setxy (max-pxcor - 2 - random 4) (max-pycor - 2 - random 4)
+    set colony-id 2
+    set role "operaria"
+    set health 300
+    set energy 270
+    set attack 1
+    set state "searching"
+    set carregando false
+  ]
+
+  create-soldados 5 [
+    set color violet
+    set cor-colonia violet
+    setxy (max-pxcor - 2 - random 4) (max-pycor - 2 - random 4)
+    set colony-id 2
+    set role "soldado"
+    set health 360
+    set energy 300
+    set attack 5
+    set state "idle"
+    set target nobody
+  ]
 
   reset-ticks
 end
 
+;; ========================== LOOP PRINCIPAL ===========================
 to go
-  ;; --- LÓGICA DAS OPERÁRIAS ---
-  ask operarias [
-    ;; gastar energia por tick
-    set energy energy - 1
- 	  if energy <= 0 [ die ]
+  ;; Cada tipo de agente executa sua rotina modularizada
+  ask operarias [ rotina-operaria ]
+  ask soldados  [ rotina-soldado ]
+  ask rainhas   [ rotina-rainha ]
 
-    ;; loop de procura de alimento
-    if state = "searching" [
-      ifelse pcolor = green [
-        ;; encontrou comida
-        set energy min (list 100 (energy + 3))
-        set carregando true
-        set state "carrying"
-        set pcolor brown
-      ] [
-        ;; Movimento com detecção de parede
-        let next-x xcor + dx
-        let next-y ycor + dy
-        ifelse (next-x > max-pxcor) or (next-x < min-pxcor) or (next-y > max-pycor) or (next-y < min-pycor) [
-          rt 90 + random 180 ;; Vira quando encostar na borda
-        ][
-          rt random 20
-          lt random 20
-          fd 1
-        ]
-      ]
-    ]
-
-    if state = "carrying" [
-      ;; voltar à rainha
-      if rainha-principal != nobody [
-        face rainha-principal
-        fd 1
-        if distance rainha-principal < 2 [
-          ;; entrega concluída
-          set carregando false
-          set state "searching"
-        ]
-      ]
-    ]
-  ]
-
-   ;; --- LÓGICA DOS SOLDADOS COM COMBATE ---
-  ask soldados [
-    ;; gastar energia
-    set energy energy - 1
-    if energy <= 0 [ die ]
-
-    ;; estado de patrulha e busca
-    if state = "idle" [
-      ;; detectar inimigos de outras colônias em raio 5
-      let inimigo one-of turtles with [
-        role != "soldado" and colony-id != [colony-id] of myself
-      ] in-radius 5
-
-      ifelse inimigo != nobody [
-        set target inimigo
-        set state "attacking"
-      ] [
-        ;; Movimento com detecção de parede
-        let next-x xcor + dx
-        let next-y ycor + dy
-        ifelse (next-x > max-pxcor) or (next-x < min-pxcor) or (next-y > max-pycor) or (next-y < min-pycor) [
-          rt 90 + random 180 ;; Vira quando encostar na borda
-        ][
-          rt random 20
-          lt random 20
-          fd 1
-        ]
-      ]
-    ]
-
-    ;; estado de ataque
-    if state = "attacking" [
-      ifelse (target = nobody) or not member? target turtles [
-        ;; alvo perdido
-        set state "idle"
-        set target nobody
-      ] [
-        ;; aproximar e lutar
-        face target
-
-        ;; Movimento com detecção de parede
-        let next-x xcor + dx
-        let next-y ycor + dy
-        ifelse (next-x > max-pxcor) or (next-x < min-pxcor) or (next-y > max-pycor) or (next-y < min-pycor) [
-          rt 90 + random 180
-        ][
-          fd 1
-        ]
-
-        if distance target < 1 [
-          ;; aplicar dano mútuo
-          ask target [
-            set health health - ([attack] of myself)
-            if health <= 0 [ die ]
-          ]
-          set health health - [attack] of target
-          if health <= 0 [ die ]
-
-          ;; decidir fuga se estiver ferido
-          if health < 20 [
-            set state "fleeing"
-          ]
-        ]
-      ]
-    ]
-
-    ;; estado de fuga
-    if state = "fleeing" [
-      if target != nobody [
-        rt 180  ;; correr para longe
-        fd 2
-      ]
-      ;; após se afastar, voltar a patrulhar
-      if (target = nobody) or (distance target > 6) [
-        set target nobody
-        set state "idle"
-      ]
-    ]
-  ]
-
-  ;; --- LÓGICA DA RAINHA ---
-  ask rainhas [
-
-    ;; gerar operárias periodicamente
-    if ticks mod 100 = 0 [
-
-      let resultado max list 1 (floor (fertilidade / 3))			;; Manipulando o quanto a fertilidade vai impactar na geração de outras formigas
-
-      ;; 80% operárias, 20% soldados (ajustável)
-      let qtd-soldados floor (resultado * 0.2)
-      let qtd-operarias (resultado - qtd-soldados)
-
-      ;; Garantir pelo menos 1 operária
-      if qtd-operarias < 1 [ set qtd-operarias 1 ]
-
-      ;; Produz operárias
-      hatch-operarias resultado [
-        set color red
-       	setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
-
-        ;; atributos gerais herdados
-        set role "operaria"
-        set health 300
-        set energy 270
-        set attack 1
-        set state "searching"
-        set carregando false
-      ]
-
-      ;; Produz soldados
-      hatch-soldados qtd-soldados [
-        set color blue
-        setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
-        set role "soldado"
-        set health 360
-        set energy 300
-        set attack 5
-        set state "idle"
-        set target nobody
-      ]
-      set filhos filhos + resultado
-  	]
-
-    ;; aumentar fertilidade se receber comida
-    if any? operarias with [ carregando = true ] in-radius 4 [	    ;; A rainha vai pegar a comida em um raio de 4. Se fosse 2 a operária ia primeira ficar como False depois vinha para essa função, o qual daria errado e não adcionaria nada
-      set fertilidade fertilidade + 1
-    ]
-  ]
-
- 	;; Dados para serem plotados
- 	if rainha-principal != nobody [
+  ;; Plots de acompanhamento
+  if rainha-principal != nobody [
     set-current-plot "Fertilidade da Rainha"
     plot [fertilidade] of rainha-principal
   ]
-    set-current-plot "Total de Operarias"
-  	plot count operarias
+  set-current-plot "Total de Operarias"
+  plot count operarias
   tick
+end
+
+;; ========================== ROTINAS DAS OPERÁRIAS ===========================
+to rotina-operaria
+  ;; Reduz energia por tick
+  set energy energy - 1
+  if energy <= 0 [ die ]
+
+  ;; Executa função conforme o estado
+  if state = "searching" [
+    buscar-comida
+  ]
+  if state = "carrying" [
+    entregar-comida
+  ]
+end
+
+;; Busca comida nos patches verdes, senão anda aleatoriamente evitando parede
+to buscar-comida
+  ifelse pcolor = green [
+    set energy min (list 100 (energy + 3))
+    set carregando true
+    set state "carrying"
+    set pcolor brown
+  ] [
+    mover-evitando-parede 1 20
+  ]
+end
+
+;; Leva comida para a rainha da própria colônia
+to entregar-comida
+  let minha-rainha one-of rainhas with [colony-id = [colony-id] of myself]
+  if minha-rainha != nobody [
+    face minha-rainha
+    mover-evitando-parede 1 0
+    if distance minha-rainha < 2 [
+      set carregando false
+      set state "searching"
+    ]
+  ]
+end
+
+;; ========================== ROTINAS DOS SOLDADOS ===========================
+to rotina-soldado
+  set energy energy - 1
+  if energy <= 0 [ die ]
+
+  if state = "idle" [
+    procurar-inimigo
+  ]
+  if state = "attacking" [
+    atacar-alvo
+  ]
+  if state = "fleeing" [
+    fugir
+  ]
+end
+
+;; Procura agentes rivais no alcance e inicia perseguição/ataque
+to procurar-inimigo
+  let inimigo one-of turtles with [
+    colony-id != [colony-id] of myself and
+    (role = "soldado" or role = "operaria" or role = "rainha")
+  ] in-radius 5
+
+  ifelse inimigo != nobody [
+    set target inimigo
+    set state "attacking"
+  ] [
+    mover-evitando-parede 1 20
+  ]
+end
+
+;; Ataca o alvo se estiver próximo, sempre checando se o alvo está vivo
+to atacar-alvo
+  ifelse (target = nobody) or not member? target turtles [
+    set state "idle"
+    set target nobody
+  ] [
+    face target
+    mover-evitando-parede 1 0
+    if distance target < 1 [
+      ;; Aplica dano mútuo (sempre checa se alvo existe)
+      if (target != nobody) and member? target turtles [
+        ask target [
+          set health health - ([attack] of myself)
+          if health <= 0 [ die ]
+        ]
+      ]
+      ifelse (target != nobody) and member? target turtles [
+        set health health - [attack] of target
+        if health <= 0 [ die ]
+        if health < 20 [
+          set state "fleeing"
+        ]
+      ] [
+        set state "idle"
+        set target nobody
+      ]
+    ]
+  ]
+end
+
+;; Foge do alvo se estiver ferido, volta ao patrulhamento após distância segura
+to fugir
+  if target != nobody [
+    rt 180
+    mover-evitando-parede 2 0
+  ]
+  if (target = nobody) or not member? target turtles or (distance target > 6) [
+    set target nobody
+    set state "idle"
+  ]
+end
+
+;; ========================== ROTINAS DAS RAINHAS ===========================
+to rotina-rainha
+  ;; Gera novas formigas periodicamente
+  if ticks mod 100 = 0 [
+    gerar-filhos
+  ]
+  ;; Aumenta fertilidade ao receber comida da própria colônia
+  if any? operarias with [ carregando = true and colony-id = [colony-id] of myself ] in-radius 4 [
+    set fertilidade fertilidade + 1
+  ]
+end
+
+;; Gera operárias e soldados conforme fertilidade, com cor e atributos da colônia
+to gerar-filhos
+  let resultado max list 1 (floor (fertilidade / 3))
+  let qtd-soldados floor (resultado * 0.2)
+  let qtd-operarias (resultado - qtd-soldados)
+  if qtd-operarias < 1 [ set qtd-operarias 1 ]
+
+  ;; Dependendo do id, gera formigas para diferentes colônias, com atributos diferentes
+  ifelse colony-id = 1 [
+    hatch-operarias qtd-operarias [
+      set color red
+      set cor-colonia red
+      setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
+      set role "operaria"
+      set health 300
+      set energy 270
+      set attack 1
+      set state "searching"
+      set carregando false
+      set colony-id 1
+    ]
+    hatch-soldados qtd-soldados [
+      set color blue
+      set cor-colonia blue
+      setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
+      set role "soldado"
+      set health 360
+      set energy 300
+      set attack 5
+      set state "idle"
+      set target nobody
+      set colony-id 1
+    ]
+  ][
+    hatch-operarias qtd-operarias [
+      set color green + 2
+      set cor-colonia green + 2
+      setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
+      set role "operaria"
+      set health 300
+      set energy 270
+      set attack 1
+      set state "searching"
+      set carregando false
+      set colony-id 2
+    ]
+    hatch-soldados qtd-soldados [
+      set color violet
+      set cor-colonia violet
+      setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
+      set role "soldado"
+      set health 360
+      set energy 300
+      set attack 5
+      set state "idle"
+      set target nobody
+      set colony-id 2
+    ]
+  ]
+
+  ;; Adiciona as novas formigas a contagem de filhos
+  set filhos filhos + resultado
+end
+
+;; ===================== MOVIMENTO UTILITÁRIO ======================
+;; Move o agente evitando sair dos limites do mundo.
+;; Parâmetro 'distancia': passos a andar
+;; Parâmetro 'max-giro': grau máximo de rotação aleatória
+to mover-evitando-parede [distancia max-giro]
+  let next-x xcor + dx
+  let next-y ycor + dy
+  ifelse (next-x > max-pxcor) or (next-x < min-pxcor) or (next-y > max-pycor) or (next-y < min-pycor) [
+    rt 90 + random 180
+  ][
+    if max-giro > 0 [
+      rt random max-giro
+      lt random max-giro
+    ]
+    fd distancia
+  ]
 end
