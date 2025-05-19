@@ -1,0 +1,186 @@
+globals [ 
+  q-table  ; Tabela de escolhas
+  actions  ; Possíveis acões
+  epochs
+]
+
+patches-own [
+  reward   ; Recompensas
+]
+
+turtles-own [
+  state       ; Estado da formiga
+]
+
+to setup 
+  clear-all
+  set epochs 0
+  setup-world
+  setup-agente
+  reset-ticks
+end
+
+to setup-world 
+  ; Criando os espações o cenário/espaço ambiente
+  ; adicionar o locais do formigueiros aqui
+  ask patch 4 4 [
+    set pcolor green 
+    set reward 10
+  ]
+
+  ; Um suposto obstáculo. Aqui se ele passar por cima ele perde, meio como uma armadilha
+  ; Podemos fazer a ação do obstáculo sem com que ele saiba a cor ou o local que ele pisa, já que ele não pode passar por cima, como a sainda da bordo
+  ; Resumindo, se não for permitida fazer a ação, "frente", "esquerda" ..., ele perde recompensa 
+  ask patch -3 2 [
+    set pcolor red
+    set reward -2
+  ]
+  set actions [ "cima" "baixo" "esquerda" "direita" ]
+  set q-table []
+end
+
+to setup-agente 
+  create-turtles 50 [
+    set shape "square"
+    set color blue 
+    setxy 0 0
+    set state (list round xcor round ycor)  ; Estado: localização. Q-Learning armazema os valores esperados de cada ação em cada estado
+   	; neste caso a acão dessa coordenada poderia ser "frente" até que um cálculo prove ao contrário
+  ]
+end
+
+to go 
+  if not any? turtles [ stop ] 
+  ask turtles [
+    
+    let state_agente_atual (list round xcor round ycor)	; Cada ants observa o estado, neste caso, coordenada atual
+    set state state_agente_atual
+    
+    let action escolher-acao state_agente_atual   ; Passa o estado para um função de escolher a melhor que tenhas mais recompensa e armazena em "action"
+    let resultado mover self action               ; Executa a ação
+    let st_futuro item 0 resultado				  ; Observa o resultado futuro
+    let recompensa item 1 resultado 	
+    
+    atualizar-Q state_agente_atual action recompensa st_futuro   ; Atualiza o Q-Table com base o estado atual, ação escolhida, a recompensa e o resultado futuro
+    
+    if recompensa != 0 [   ; Focado no aprendizado. tirar na hora da apresentação
+      die
+      set epochs epochs + 1
+    ]
+  ]
+  
+  if not any? turtles [   ; Adicionar novos agentes se não tiver nenhum
+    setup-agente
+  ]
+  
+  tick
+end
+
+to treinar
+  ; Mesmo esquema mas aqui ele traina sem visualização gráfica
+  repeat 1000 [ ; quantidade de episódios
+    if not any? turtles [ setup-agente ]
+    let agente one-of turtles
+
+    let estado-atual list round [xcor] of agente round [ycor] of agente
+    let acao escolher-acao estado-atual
+    let resultado mover agente acao
+    let estado-futuro item 0 resultado
+    let recompensa item 1 resultado
+
+    atualizar-Q estado-atual acao recompensa estado-futuro
+
+    if recompensa != 0 [
+      ask agente [ die ]
+      set epochs epochs + 1
+    ]
+  ]
+end
+
+
+to-report escolher-acao [ state_agente ]
+  let epsilon 0.8  ; taxa de exploração  
+  ; let epsilon max (list 0.1 (1 / (1 + ticks * 0.01))) diminuir a taxa de exploração com o passar do tempo
+  ; Analisar esse parâmetro que provavelmente pode cair em caso que ele só irá ficar mais burro ao passar do tempo.
+  ; Usar desempenho médio ou taxa de sucesso
+  ifelse random-float 1 < epsilon [
+    report one-of actions
+  ] [
+    report melhor-action state_agente
+  ]
+end
+
+to-report melhor-action [ state_agente ]
+  let valores []
+  foreach actions [ a ->
+    set valores lput ( q-valor state_agente a ) valores    ; vai mandar o estado e a ação para a função q-valor que vai retornar uma lista de probabilidade: [4.8 7 9 0.3]
+  ]
+  let melhor-index position max valores valores   ; retornar a posição da valor mais alta -> 2 => 9
+  report item melhor-index actions                ; na lista de de ação, executar a ação de index 2
+end
+
+to-report q-valor [ state_agente action ]
+  let entrada filter [ entry ->
+    item 0 entry = state_agente and item 1 entry = action       ; Percorrer todas os índices do Q-table e retornar aquela que o estado corresponde e o mesmo com a ação
+  ] q-table                          ; q-table -> [ state action value ]
+  if length entrada > 0 [            ; se tamanho da entrada for maior que 0 quer dizer que já foi percorrido aquele caminho e levado em consideração no aprendizado
+    report item 2 first entrada      ; retornar o índex 2/value
+  ] 
+  report 0                           ; 
+end
+
+to-report mover [ turtle-agent action ]
+  let delta-x  0
+  let delta-y 0
+  
+  ; Adicione + 1 na direção na qual a ação foi escolinha
+  
+  if action = "cima"    [ set delta-y  1 ]
+  if action = "baixo"   [ set delta-y -1 ]
+  if action = "direita" [ set delta-x  1 ]
+  if action = "esquerda"[ set delta-x -1 ]
+  
+  let novo_x (round [xcor] of turtle-agent) + delta-x
+  let novo_y (round [ycor] of turtle-agent) + delta-y 
+  if novo_x < min-pxcor or novo_x > max-pxcor or
+   novo_y < min-pycor or novo_y > max-pycor [ 				; Verificar se o x ou y é maior ou menor que a espaço limite
+  	report (list [state] of turtle-agent 0)					; Se for maior ele retorna o estado atual e recompensa = 0 (é bom aumentar)
+	]
+  
+  ask turtle-agent [ setxy novo_x novo_y ]					; Move o agente para o novo ponto
+  
+  let new_state (list novo_x novo_y)
+  let recomp ([reward] of patch novo_x novo_y)
+  report (list new_state recomp)							; retorna o novo estado/localização e recompensa do ambiente no qual ele chegou
+end
+
+to atualizar-Q [ state_agente action recompensa st-futuro ]
+  let alpha 0.5           ; taxa do aprendizado
+  let gamma 0.9			  ; taxa do desconto -> o quanto o valor futuro influenciarar nessa decisão
+  
+  let q-antigo q-valor state_agente action		
+  let melhor-futuro max map [ a -> q-valor st-futuro a ] actions                  ; calcular todos o futuros do próximo estado e retornar o mais provável
+  let q-novo q-antigo + alpha * (recompensa + gamma * melhor-futuro - q-antigo)   ; Equação que ajusta o valor do Q
+  
+  let entrada filter [ entry ->
+    item 0 entry = state_agente and item 1 entry = action
+  ] q-table
+  ifelse length entrada > 0 [														; Verificar se já tem um "Q" no q-table
+    let idx position first entrada q-table											; buscar a posição
+    set q-table replace-item idx q-table (list state_agente action q-novo)			; atualizar o "Q" do q-table naquele index
+  ] [
+    set q-table lput (list state_agente action q-novo) q-table       ; Adicionar novos estados, ações e recompensas
+  ]
+end
+
+
+to mostrar-Q
+  ask patches [
+    let state_agente list pxcor pycor
+    let melhor melhor-action state_agente
+    if melhor = "cima"     [ set plabel "↑" ]
+    if melhor = "baixo"    [ set plabel "↓" ]
+    if melhor = "esquerda" [ set plabel "←" ]
+    if melhor = "direita"  [ set plabel "→" ]
+  ]
+end

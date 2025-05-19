@@ -1,0 +1,88 @@
+breed [operarias operaria]
+breed [soldados soldado]
+breed [rainhas rainha]
+
+globals [
+  anthill-locations  ;; lista de centros válidos
+]
+
+;; desenha um círculo de raio 'raio' e cor 'cor' em torno de (x,y)
+to anthill-circle [x y raio cor]
+  ask patches with [distancexy x y <= raio] [
+    set pcolor cor
+  ]
+end
+
+to setup
+  clear-all
+
+  let num-anthills 3
+  let raio 3
+  let margem 1
+  let min-dist (2 * raio + margem)
+
+  ;; limites para que o círculo caiba completamente
+  let xmin-limit min-pxcor + raio
+  let xmax-limit max-pxcor - raio
+  let ymin-limit min-pycor + raio
+  let ymax-limit max-pycor - raio
+
+  set anthill-locations []
+
+  ;; gera centros sem sobreposição e dentro dos limites
+  while [length anthill-locations < num-anthills] [
+    let cx (random-float (xmax-limit - xmin-limit)) + xmin-limit
+    let cy (random-float (ymax-limit - ymin-limit)) + ymin-limit
+
+    let valido? true
+    foreach anthill-locations [ coord ->
+      let ox item 0 coord
+      let oy item 1 coord
+      let delta-x cx - ox
+      let delta-y cy - oy
+      if sqrt (delta-x * delta-x + delta-y * delta-y) <= min-dist [
+        set valido? false
+      ]
+    ]
+
+    if valido? [
+      set anthill-locations lput (list cx cy) anthill-locations
+    ]
+  ]
+
+  ;; desenha formigueiros e cria agentes
+  foreach anthill-locations [ coord ->
+    let x item 0 coord
+    let y item 1 coord
+
+    anthill-circle x y raio green
+
+    create-rainhas 1 [
+      set color white
+      setxy x y
+    ]
+    create-soldados 1 [
+      set color blue
+      setxy (x + 1) y
+    ]
+    create-operarias 2 [
+      set color red
+      setxy (x + random 3 - 1) (y + random 3 - 1)
+    ]
+  ]
+
+  reset-ticks
+end
+
+
+to go
+  ask operarias [
+    rt random 360
+    fd 0.5
+  ]
+  ask soldados [
+    rt random 360
+    fd 0.7
+  ]
+  tick
+end
