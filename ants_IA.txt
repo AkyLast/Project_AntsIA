@@ -48,8 +48,8 @@ to setup
     ;; atributos gerais
     set colony-id colony-id-counter
     set role "operaria"
-    set health 100
-    set energy 90
+    set health 300
+    set energy 270
     set attack 1
     set state "searching"
     set carregando false
@@ -63,8 +63,8 @@ to setup
     ;; atributos gerais
     set colony-id colony-id-counter
     set role "soldado"
-    set health 120
-    set energy 100
+    set health 360
+    set energy 300
     set attack 5
     set state "idle"
     set target nobody
@@ -78,8 +78,8 @@ to setup
     ;; atributos gerais
     set colony-id colony-id-counter
     set role "rainha"
-    set health 200
-    set energy 200
+    set health 600
+    set energy 600
     set attack 0
     set state "idle"
 
@@ -109,10 +109,16 @@ to go
         set state "carrying"
         set pcolor brown
       ] [
-        ;; procurar comida
-        rt random 20
-        lt random 20
-        fd 1
+        ;; Movimento com detecção de parede
+        let next-x xcor + dx
+        let next-y ycor + dy
+        ifelse (next-x > max-pxcor) or (next-x < min-pxcor) or (next-y > max-pycor) or (next-y < min-pycor) [
+          rt 90 + random 180 ;; Vira quando encostar na borda
+        ][
+          rt random 20
+          lt random 20
+          fd 1
+        ]
       ]
     ]
 
@@ -147,10 +153,16 @@ to go
         set target inimigo
         set state "attacking"
       ] [
-        ;; patrulhar
-        rt random 60
-        lt random 60
-        fd 1
+        ;; Movimento com detecção de parede
+        let next-x xcor + dx
+        let next-y ycor + dy
+        ifelse (next-x > max-pxcor) or (next-x < min-pxcor) or (next-y > max-pycor) or (next-y < min-pycor) [
+          rt 90 + random 180 ;; Vira quando encostar na borda
+        ][
+          rt random 20
+          lt random 20
+          fd 1
+        ]
       ]
     ]
 
@@ -163,7 +175,16 @@ to go
       ] [
         ;; aproximar e lutar
         face target
-        fd 1
+
+        ;; Movimento com detecção de parede
+        let next-x xcor + dx
+        let next-y ycor + dy
+        ifelse (next-x > max-pxcor) or (next-x < min-pxcor) or (next-y > max-pycor) or (next-y < min-pycor) [
+          rt 90 + random 180
+        ][
+          fd 1
+        ]
+
         if distance target < 1 [
           ;; aplicar dano mútuo
           ask target [
@@ -203,17 +224,37 @@ to go
 
       let resultado max list 1 (floor (fertilidade / 3))			;; Manipulando o quanto a fertilidade vai impactar na geração de outras formigas
 
-      hatch-operarias resultado [									;; Filhas da respectiva rainha
+      ;; 80% operárias, 20% soldados (ajustável)
+      let qtd-soldados floor (resultado * 0.2)
+      let qtd-operarias (resultado - qtd-soldados)
+
+      ;; Garantir pelo menos 1 operária
+      if qtd-operarias < 1 [ set qtd-operarias 1 ]
+
+      ;; Produz operárias
+      hatch-operarias resultado [
         set color red
        	setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
 
         ;; atributos gerais herdados
         set role "operaria"
-        set health 100
-        set energy 100
+        set health 300
+        set energy 270
         set attack 1
         set state "searching"
         set carregando false
+      ]
+
+      ;; Produz soldados
+      hatch-soldados qtd-soldados [
+        set color blue
+        setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
+        set role "soldado"
+        set health 360
+        set energy 300
+        set attack 5
+        set state "idle"
+        set target nobody
       ]
       set filhos filhos + resultado
   	]
