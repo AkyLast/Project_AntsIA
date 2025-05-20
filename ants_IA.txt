@@ -54,40 +54,14 @@ to setup
     setxy min-pxcor + 2 min-pycor + 2
     set colony-id 1
     set role "rainha"
-    set health 600
-    set energy 600
+    set health 1000
+    set energy 500
     set attack 0
     set state "idle"
     set filhos 0
     set fertilidade 1
   ]
   set rainha-principal one-of rainhas with [colony-id = 1]
-
-  create-operarias 25 [
-    set color red
-    set cor-colonia red
-    setxy (min-pxcor + 2 + random 4) (min-pycor + 2 + random 4)
-    set colony-id 1
-    set role "operaria"
-    set health 300
-    set energy 270
-    set attack 1
-    set state "searching"
-    set carregando false
-  ]
-
-  create-soldados 5 [
-    set color blue
-    set cor-colonia blue
-    setxy (min-pxcor + 2 + random 4) (min-pycor + 2 + random 4)
-    set colony-id 1
-    set role "soldado"
-    set health 360
-    set energy 300
-    set attack 5
-    set state "idle"
-    set target nobody
-  ]
 
   ;; Colônia 2 (canto superior direito)
   create-rainhas 1 [
@@ -96,40 +70,14 @@ to setup
     setxy max-pxcor - 2 max-pycor - 2
     set colony-id 2
     set role "rainha"
-    set health 600
-    set energy 600
+    set health 1000
+    set energy 500
     set attack 0
     set state "idle"
     set filhos 0
     set fertilidade 1
   ]
   set rainha-rival one-of rainhas with [colony-id = 2]
-
-  create-operarias 25 [
-    set color green + 2
-    set cor-colonia green + 2
-    setxy (max-pxcor - 2 - random 4) (max-pycor - 2 - random 4)
-    set colony-id 2
-    set role "operaria"
-    set health 300
-    set energy 270
-    set attack 1
-    set state "searching"
-    set carregando false
-  ]
-
-  create-soldados 5 [
-    set color violet
-    set cor-colonia violet
-    setxy (max-pxcor - 2 - random 4) (max-pycor - 2 - random 4)
-    set colony-id 2
-    set role "soldado"
-    set health 360
-    set energy 300
-    set attack 5
-    set state "idle"
-    set target nobody
-  ]
 
   reset-ticks
 end
@@ -169,7 +117,8 @@ end
 ;; Busca comida nos patches verdes, senão anda aleatoriamente evitando parede
 to buscar-comida
   ifelse pcolor = green [
-    set energy min (list 100 (energy + 3))
+    set energy energy + 3
+    if energy > 1000 [ set energy 1000 ]
     set carregando true
     set state "carrying"
     set pcolor brown
@@ -270,15 +219,16 @@ to rotina-rainha
   if ticks mod 100 = 0 [
     gerar-filhos
   ]
+
   ;; Aumenta fertilidade ao receber comida da própria colônia
   if any? operarias with [ carregando = true and colony-id = [colony-id] of myself ] in-radius 4 [
-    set fertilidade fertilidade + 1
+    set fertilidade fertilidade + 0.1
   ]
 end
 
 ;; Gera operárias e soldados conforme fertilidade, com cor e atributos da colônia
 to gerar-filhos
-  let resultado max list 1 (floor (fertilidade / 3))
+  let resultado max list 2 (floor (fertilidade / 3))
   let qtd-soldados floor (resultado * 0.2)
   let qtd-operarias (resultado - qtd-soldados)
   if qtd-operarias < 1 [ set qtd-operarias 1 ]
@@ -291,7 +241,7 @@ to gerar-filhos
       setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
       set role "operaria"
       set health 300
-      set energy 270
+      set energy 500
       set attack 1
       set state "searching"
       set carregando false
@@ -302,8 +252,8 @@ to gerar-filhos
       set cor-colonia blue
       setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
       set role "soldado"
-      set health 360
-      set energy 300
+      set health 400
+      set energy 500
       set attack 5
       set state "idle"
       set target nobody
@@ -316,7 +266,7 @@ to gerar-filhos
       setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
       set role "operaria"
       set health 300
-      set energy 270
+      set energy 300
       set attack 1
       set state "searching"
       set carregando false
@@ -327,7 +277,7 @@ to gerar-filhos
       set cor-colonia violet
       setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
       set role "soldado"
-      set health 360
+      set health 400
       set energy 300
       set attack 5
       set state "idle"
