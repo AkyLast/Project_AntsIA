@@ -9,19 +9,25 @@ breed [soldados soldado]
 breed [rainhas rainha]
 
 globals [
-  rainha-principal
-  rainha-rival
-  colony-id-counter
+  rainha-principal        ;; referência à rainha principal (colônia 1)
+  rainha-rival            ;; referência à rainha rival (colônia 2)
+  colony-id-counter       ;; contador para gerar IDs de colônia
+  max-arvores             ;; número máximo de árvores
+]
+
+patches-own [
+  eh-arvore?              ;; indica se o patch contém uma árvore
+  idade-arvore            ;; idade da árvore (para crescimento ou remoção futura)
 ]
 
 turtles-own [
-  colony-id
-  role
-  health
-  energy
-  attack
-  state
-  cor-colonia
+  colony-id    ;; identificador da colônia
+  role         ;; "operaria", "soldado" ou "rainha"
+  health       ;; pontos de vida
+  energy       ;; energia disponível (para mover, lutar etc.)
+  attack       ;; poder de ataque
+  state        ;; "searching", "carrying", "attacking", "fleeing", "idle"
+  cor-colonia  ;; cor principal da colônia
 ]
 
 operarias-own [ carregando ]
@@ -32,6 +38,7 @@ rainhas-own [ filhos fertilidade ]
 to setup
   clear-all
   set colony-id-counter 1
+  set max-arvores 30
 
   ;; Geração de grupos de comida (patches verdes)
   let quantidade-verdes 10
@@ -47,7 +54,10 @@ to setup
     set pcolor yellow
   ]
 
-  ;; Colônia 1
+  ;; Geração inicial de árvores
+  criar-arvores-iniciais
+
+  ;; Colônia 1 (canto inferior esquerdo)
   create-rainhas 1 [
     set color white
     set cor-colonia white
@@ -63,7 +73,7 @@ to setup
   ]
   set rainha-principal one-of rainhas with [colony-id = 1]
 
-  ;; Colônia 2
+  ;; Colônia 2 (canto superior direito)
   create-rainhas 1 [
     set color orange + 2
     set cor-colonia orange + 2
@@ -82,28 +92,42 @@ to setup
   reset-ticks
 end
 
+;; ===================== PLANTIO DE ÁRVORES =====================
+to criar-arvores-iniciais
+  let candidatos patches with [pcolor = brown and not eh-arvore?]
+  if any? candidatos [
+    ask n-of (min (list max-arvores count candidatos)) candidatos [
+      set eh-arvore? true
+      set pcolor (scale-color green 8 0 10)
+      set idade-arvore random 500
+    ]
+  ]
+end
+
 ;; ========================== LOOP PRINCIPAL ===========================
 to go
+  ;; Cada tipo de agente executa sua rotina modularizada
   ask operarias [ rotina-operaria ]
   ask soldados  [ rotina-soldado ]
   ask rainhas   [ rotina-rainha ]
 
-  ;; Plots
+  ;; Plots de acompanhamento
   if rainha-principal != nobody [
     set-current-plot "Fertilidade da Rainha"
     plot [fertilidade] of rainha-principal
   ]
   set-current-plot "Total de Operarias"
   plot count operarias
-
   tick
 end
 
 ;; ========================== ROTINAS DAS OPERÁRIAS ===========================
 to rotina-operaria
+  ;; Reduz energia por tick
   set energy energy - 1
   if energy <= 0 [ die ]
 
+  ;; Executa função conforme o estado
   if state = "searching" [
     buscar-comida
   ]
@@ -112,6 +136,7 @@ to rotina-operaria
   ]
 end
 
+;; Busca comida nos patches verdes, senão anda aleatoriamente evitando parede
 to buscar-comida
   ifelse pcolor = green [
     set energy energy + 3
@@ -124,6 +149,7 @@ to buscar-comida
   ]
 end
 
+;; Leva comida para a rainha da própria colônia
 to entregar-comida
   let minha-rainha one-of rainhas with [colony-id = [colony-id] of myself]
   if minha-rainha != nobody [
@@ -152,6 +178,7 @@ to rotina-soldado
   ]
 end
 
+;; Procura agentes rivais no alcance e inicia perseguição/ataque
 to procurar-inimigo
   let inimigo one-of turtles with [
     colony-id != [colony-id] of myself and
@@ -166,6 +193,7 @@ to procurar-inimigo
   ]
 end
 
+;; Ataca o alvo se estiver próximo, sempre checando se o alvo está vivo
 to atacar-alvo
   ifelse (target = nobody) or not member? target turtles [
     set state "idle"
@@ -174,6 +202,7 @@ to atacar-alvo
     face target
     mover-evitando-parede 1 0
     if distance target < 1 [
+      ;; Aplica dano mútuo (sempre checa se alvo existe)
       if (target != nobody) and member? target turtles [
         ask target [
           set health health - ([attack] of myself)
@@ -194,6 +223,7 @@ to atacar-alvo
   ]
 end
 
+;; Foge do alvo se estiver ferido, volta ao patrulhamento após distância segura
 to fugir
   if target != nobody [
     rt 180
@@ -207,21 +237,25 @@ end
 
 ;; ========================== ROTINAS DAS RAINHAS ===========================
 to rotina-rainha
+  ;; Gera novas formigas periodicamente
   if ticks mod 100 = 0 [
     gerar-filhos
   ]
 
+  ;; Aumenta fertilidade ao receber comida da própria colônia
   if any? operarias with [ carregando = true and colony-id = [colony-id] of myself ] in-radius 4 [
     set fertilidade fertilidade + 0.1
   ]
 end
 
+;; Gera operárias e soldados conforme fertilidade, com cor e atributos da colônia
 to gerar-filhos
   let resultado max list 2 (floor (fertilidade / 3))
   let qtd-soldados floor (resultado * 0.2)
   let qtd-operarias (resultado - qtd-soldados)
   if qtd-operarias < 1 [ set qtd-operarias 1 ]
 
+  ;; Dependendo do id, gera formigas para diferentes colônias, com atributos diferentes
   ifelse colony-id = 1 [
     hatch-operarias qtd-operarias [
       set color red
@@ -274,10 +308,14 @@ to gerar-filhos
     ]
   ]
 
+  ;; Adiciona as novas formigas a contagem de filhos
   set filhos filhos + resultado
 end
 
 ;; ===================== MOVIMENTO UTILITÁRIO ======================
+;; Move o agente evitando sair dos limites do mundo.
+;; Parâmetro 'distancia': passos a andar
+;; Parâmetro 'max-giro': grau máximo de rotação aleatória
 to mover-evitando-parede [distancia max-giro]
   let next-x xcor + dx
   let next-y ycor + dy
@@ -291,4 +329,3 @@ to mover-evitando-parede [distancia max-giro]
     fd distancia
   ]
 end
-
