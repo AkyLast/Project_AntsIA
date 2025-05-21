@@ -1,131 +1,550 @@
+extensions [ table ]
 
-;; Criação de classes
 breed [operarias operaria]
-breed [ soldados soldado ]
-breed [ rainhas rainha ]
+breed [soldados soldado]
+breed [rainhas rainha]
 
-globals [ rainha-principal ]
-operarias-own [ energia carregando ]
-soldados-own [ forca ]
+globals [
+  q-table-operarias
+  q-table-soldados
+  q-table-rainhas
+  actions                 ; [ search_food combat furt giveQueen ]
+  epochs
+
+  rainha-principal        ;; referência à rainha principal (colônia 1)
+  rainha-rival            ;; referência à rainha rival (colônia 2)
+  colony-id-counter       ;; contador para gerar IDs de colônia
+]
+
+turtles-own [
+  prev-x prev-y   ; Analizar o x y futuru
+  colony-id    ;; identificador da colônia
+  boost          ; boost para fugir
+  role         ;; "operaria", "soldado" ou "rainha"
+  health       ;; pontos de vida
+  energy       ;; energia disponível (para mover, lutar etc.)
+  attack       ;; poder de ataque
+  cor-colonia  ;; cor principal da colônia
+
+  state                 ; [ xcor ycor carrying enemy_near enemy_distance ]
+  reward
+]
+
+operarias-own [ carregando ]
+soldados-own [ target ]
 rainhas-own [ filhos fertilidade ]
 
 
 to setup
   clear-all
-  
-  let quantidade-verdes 10 ;; Quantidade de comida geradas em grupo
-  let raio 3			   ;; raio do grupo de comida
+  set epochs 0
+  setup-world
+  setup-ants
+  reset-ticks
+end
 
+
+
+to setup-world
+   ;; Geração de grupos de comida (patches verdes)
+  let quantidade-verdes 10
+  let raio 3
   ask n-of quantidade-verdes patches [
     ask patches in-radius raio [
       set pcolor green
     ]
-	]
+  ]
 
-  ;; Gerar alguns opstáculos testes	
+  ;; Geração de obstáculos (patches amarelos)
   ask patches with [ random-float 1 < 0.005 ] [
     set pcolor yellow
   ]
 
-  ;; Configurando as formigas operárias
-  create-operarias 50 [
-    set color red
-    setxy random-xcor random-ycor
-    set energia 90
-    set carregando false
+  set actions [ "search_food" "combat" "furt" "giveQueen"  ]
+
+  set q-table-operarias table:make
+  set q-table-soldados  table:make
+  set q-table-rainhas   table:make
+
+  
+end
+
+to-report define-state-operarias
+  let enemy-turtles other turtles with [ colony-id != [colony-id] of myself ]
+  let enemy-near? false
+  let enemy-distance 0
+
+  if any? enemy-turtles [
+    let nearest-enemy min-one-of enemy-turtles [ distance myself ]
+    set enemy-near? true
+    set enemy-distance distance nearest-enemy
   ]
 
-  ;; Configurando as formigas soldados
-  create-soldados 10 [
-    set color blue
-    set forca 10
-    setxy random-xcor random ycor
+  report (word xcor "|" ycor "|" enemy-near? "|" enemy-distance "|" health)
+end
+
+to-report define-state-soldados
+  let enemy-turtles other turtles with [ colony-id != [colony-id] of myself ]
+  let enemy-near? false
+  let enemy-distance 0
+
+  if any? enemy-turtles [
+    let nearest-enemy min-one-of enemy-turtles [ distance myself ]
+    set enemy-near? true
+    set enemy-distance distance nearest-enemy
   ]
 
-  ;; Configurando a rainha
+  report (word xcor "|" ycor "|" enemy-near? "|" enemy-distance "|" health)
+end
+
+to-report define-state-rainhas
+  let enemy-turtles other turtles with [ colony-id != [colony-id] of myself ]
+  let enemy-near? false
+  let enemy-distance 0
+
+  if any? enemy-turtles [
+    let nearest-enemy min-one-of enemy-turtles [ distance myself ]
+    set enemy-near? true
+    set enemy-distance distance nearest-enemy
+  ]
+
+  report (word xcor "|" ycor "|" enemy-near? "|" enemy-distance "|" health)
+end
+
+to setup-ants
   create-rainhas 1 [
     set color white
-    setxy 0 0
+    set cor-colonia white
+    setxy min-pxcor + 2 min-pycor + 2
+    set colony-id 1
+    set role "rainha"
+    set health 250
+    set energy 600
+    set attack 0
+    set state define-state-rainhas
     set filhos 0
     set fertilidade 1
   ]
-  
-  set rainha-principal one-of rainhas   ;; Localizar a rainha pois futuramente queremos que as formigas manipule seus dados com ela
-  
-  reset-ticks
+  set rainha-principal one-of rainhas with [colony-id = 1]
+
+  create-operarias 150 [
+    set color red
+    set cor-colonia red
+    setxy (min-pxcor + 2 + random-float 5) (min-pycor + 2 + random-float 3 )
+    set colony-id 1
+    set role "operaria"
+    set health 120
+    set energy 270
+    set attack 1
+    set state define-state-operarias
+    set carregando false
+  ]
+
+  create-soldados 30 [
+    set color blue
+    set cor-colonia blue
+    setxy (min-pxcor + 2 + random-float 5) (min-pycor + 2 + random-float 2 )
+    set colony-id 1
+    set role "soldado"
+    set health 70
+    set energy 300
+    set attack 5
+    set state define-state-soldados
+  ]
+
+  ;; Colônia 2 (canto superior direito)
+  create-rainhas 1 [
+    set color orange + 2
+    set cor-colonia orange + 2
+    setxy max-pxcor - 2 max-pycor - 2
+    set colony-id 2
+    set role "rainha"
+    set health 250
+    set energy 600
+    set attack 0
+    set state define-state-rainhas
+    set filhos 0
+    set fertilidade 1
+  ]
+  set rainha-rival one-of rainhas with [colony-id = 2]
+
+  create-operarias 150 [
+    set color green + 2
+    set cor-colonia green + 2
+    setxy (max-pxcor - 1 - random-float 5 ) (max-pycor - 2 - random-float 3 )
+    set colony-id 2
+    set role "operaria"
+    set health 120
+    set energy 270
+    set attack 1
+    set state define-state-operarias
+    set carregando false
+  ]
+
+  create-soldados 30 [
+    set color violet
+    set cor-colonia violet
+    setxy (max-pxcor - 2 - random-float 5 ) (max-pycor - 2 - random-float 2 )
+    set colony-id 2
+    set role "soldado"
+    set health 70
+    set energy 300
+    set attack 5
+    set state define-state-soldados
+    set target nobody
+  ]
 end
 
+to observar
+  if health <= 0 [ die stop ] 
+  if role = "rainha"   [ set state define-state-rainhas ]
+  if role = "soldado"  [ set state define-state-soldados ]
+  if role = "operaria" [ set state define-state-operarias ]
+
+end
+
+to escolher
+  let q-table 0
+  if role = "rainha"   [ set q-table q-table-rainhas ]
+  if role = "soldado"  [ set q-table q-table-soldados ]
+  if role = "operaria" [ set q-table q-table-operarias ]
+
+  let action escolher-action q-table state
+  set state list state action  ;; armazenar junto para próxima fase (ou use variável separada)
+end
+
+to agir
+  if health <= 0 [ die stop ]
+  
+  let q-table 0
+  if role = "rainha"   [ set q-table q-table-rainhas ]
+  if role = "soldado"  [ set q-table q-table-soldados ]
+  if role = "operaria" [ set q-table q-table-operarias ]
+
+  let action last state
+  let old-state item 0 state
+  let resul execute self action
+  let state_future item 0 resul
+  let reward_ants item 1 resul
+
+  update-Q old-state action reward_ants state_future
+
+  ;if reward_ants >= 2000 or reward_ants <= -8000 [ die stop ]
+end
+
+to verificar-morte-de-rainha
+  ; Verifica se a rainha principal morreu
+  if rainha-principal != nobody and not member? rainha-principal turtles [
+    ; Penaliza colônia 1, recompensa colônia 2
+    ask turtles with [colony-id = 1] [ set reward reward - 1500 ]
+    ask turtles with [colony-id = 2] [ set reward reward + 1500 ]
+    set rainha-principal nobody
+  ]
+
+  ; Verifica se a rainha rival morreu
+  if rainha-rival != nobody and not member? rainha-rival turtles [
+    ; Penaliza colônia 2, recompensa colônia 1
+    ask turtles with [colony-id = 2] [ set reward reward - 1500 ]
+    ask turtles with [colony-id = 1] [ set reward reward + 1500 ]
+    set rainha-rival nobody
+  ]
+end
+
+to verificar-fim-de-jogo
+  let col1-vivas any? turtles with [colony-id = 1 and health > 0]
+  let col2-vivas any? turtles with [colony-id = 2 and health > 0]
+
+  if not col1-vivas or not col2-vivas [
+    setup
+    set epochs epochs + 1
+    stop
+  ]
+end
+
+
 to go
-  ask operarias [
-    ifelse carregando = false [    ;; Se não estiver carregando alimento
-      ;; buscar comida (func)
-      ifelse pcolor = green [
-        set energia energia + 3
-        set carregando true
-        set pcolor brown
-      ]  [
-        ;; if pcolor = yellow [ rt 180 fd 1 ]   ;; Desviar dos obtáculos
-        rt random 20
-        lt random 20
-        fd 1
+  ask turtles with [health > 0] [
+    observar
+    escolher
+    agir
+  ]  
+
+  verificar-fim-de-jogo
+
+  tick
+end
+
+to q-learning
+  let state_ants_atual 0
+  if role = "rainha" [
+   set state_ants_atual define-state-rainhas
+  ]
+  if role = "soldado" [
+    set state_ants_atual define-state-soldados
+  ]
+  if role = "operaria" [
+    set state_ants_atual define-state-operarias
+  ]
+
+
+   let q-table 0
+   if role = "rainha" [ set q-table q-table-rainhas ]
+   if role = "soldado" [ set q-table q-table-soldados ]
+   if role = "operaria" [ set q-table q-table-operarias ]
+
+   let action escolher-action q-table state_ants_atual
+   let resul execute self action
+   let state_future item 0 resul
+   let reward_ants item 1 resul
+
+   update-Q state_ants_atual action reward_ants state_future
+
+   if reward_ants != 0 [ die stop]
+end
+
+to-report escolher-action [ q-table state_agents ]
+  let epsilon  0.3       ; Taxa de exploração
+  ifelse random-float 1 < epsilon [ report one-of actions ]
+  [ report best-action q-table state_agents]
+end
+
+to-report best-action [ q-table state_agents ]
+  let values [ ]
+
+  foreach actions [ a ->
+    ifelse table:has-key? q-table (list state_agents a) [
+      set values lput (table:get q-table (list state_agents a)) values
+    ] [
+      set values lput 0 values  ;; ou outro valor inicial
+    ]
+  ]
+  let best-index position max values values
+  report item best-index actions
+end
+
+to-report q-value [ q-table state_agents action ]
+
+  if table:has-key? q-table (list state_agents action) [
+    report table:get q-table (list state_agents action)
+  ]
+  report random-float 0.1  ; Taxa de exploração ( Ambiente )
+end
+
+to-report execute [ ants_agent action ]
+   if [health] of ants_agent <= 0 [
+    report (list [state] of ants_agent -9999) ; estado irrelevante e recompensa negativa
+  ]
+  
+  if action = "search_food" [
+    move ants_agent
+  ]
+  if action = "combat" and [health] of ants_agent > 0 [
+    combat ants_agent
+  ]
+  if action = "furt" [
+    furt ants_agent
+  ]
+  if action = "giveQueen" [
+    return_for_rainha ants_agent
+  ]
+
+  let new_state 0
+  if [role] of ants_agent = "operaria" [
+    set new_state [define-state-operarias] of ants_agent
+  ]
+  if [role] of ants_agent = "soldado" [
+    set new_state [define-state-soldados] of ants_agent
+  ]
+  if [role] of ants_agent = "rainha" [
+    set new_state [define-state-rainhas] of ants_agent
+  ]
+
+  let earned_reward [reward] of ants_agent
+  report (list new_state earned_reward)
+end
+
+to update-Q [ state-agents action reward-ants state-future ]
+  if role = "rainha" [
+    queen_atualizar-Q state-agents action reward-ants state-future
+  ]
+  if role = "soldado" [
+    soldier_atualizar-Q state-agents action reward-ants state-future
+  ]
+  if role = "operaria" [
+    operarias_atualizar-Q state-agents action reward-ants state-future
+  ]
+end
+
+to queen_atualizar-Q [state-agents action reward-ants state-future]
+  let alpha 0.5
+  let gamma 0.9
+
+  let q-last q-value q-table-rainhas state-agents action
+  let best-future max map [ a -> q-value q-table-rainhas state-future a ] actions
+  let q-new q-last + alpha * ( reward-ants + gamma * best-future - q-last )
+
+  table:put q-table-rainhas (list state-agents action) q-new
+end
+
+to soldier_atualizar-Q [state-agents action reward-ants state-future]
+  let alpha 0.5
+  let gamma 0.9
+
+  let q-last q-value q-table-soldados state-agents action
+  let best-future max map [ a -> q-value q-table-soldados state-future a ] actions
+  let q-new q-last + alpha * ( reward-ants + gamma * best-future - q-last )
+
+  table:put q-table-soldados (list state-agents action) q-new
+end
+
+to operarias_atualizar-Q [state-agents action reward-ants state-future]
+  let alpha 0.5
+  let gamma 0.9
+
+  let q-last q-value q-table-operarias state-agents action
+  let best-future max map [ a -> q-value q-table-operarias state-future a ] actions
+  let q-new q-last + alpha * ( reward-ants + gamma * best-future - q-last )
+
+  table:put q-table-operarias (list state-agents action) q-new
+end
+
+; Analizando borda
+to check-bounds [ant]
+  ask ant [
+    if xcor > max-pxcor or xcor < min-pxcor or
+       ycor > max-pycor or ycor < min-pycor [
+      set xcor prev-x
+      set ycor prev-y
+      set reward reward - 100
+    ]
+  ]
+end
+
+to move [ants_agents]
+  if [health] of ants_agents <= 0 [ stop ]
+  ask ants_agents [
+    set prev-x xcor
+    set prev-y ycor
+
+    let vizinhos patches in-radius (1 + boost) with [not any? turtles-here]
+
+    if any? vizinhos [
+      let escolhido one-of vizinhos
+
+      if [pcolor] of escolhido = green [ set reward reward + 5 ]
+      if [pcolor] of escolhido = yellow [ set reward reward - 10 ]
+
+      move-to escolhido
+      check-bounds self
+
+      ;  Penalidade da rainha se mover
+      if role = "rainha" [
+        if xcor != prev-x or ycor != prev-y [
+          set reward reward - 1000
+        ]
       ]
-    ]  [
-      ;; voltar para rainha
-      if rainha-principal != nobody [
-        face rainha-principal
-        fd 1
-        
-        if distance rainha-principal < 2 [			;; Se tiver em um raio de 2 próximo da rainha pode considerar a comida emtregue
-          set carregando false
-          ;; comida entregue aqui
+
+      ;; Penalidade por distância excessiva do soldado em relação à rainha
+      if role = "soldado" [
+        let minha-rainha one-of rainhas with [colony-id = [colony-id] of myself]
+        if minha-rainha != nobody [
+          if distance minha-rainha > 5 [
+            set reward reward - 20
+          ]
+        ]
+      ]
+
+      ; Possibilidade da formiga se mover masi rápido
+      if boost > 0 [
+        set boost boost - 0.2 ; tirar
+      ]
+    ]
+  ]
+end
+
+to combat [ants_agent]
+  if [health] of ants_agent <= 0 [ stop ]
+
+  ;; agora sim procede ao combate apenas se target válido
+  let inimigos other turtles with [ colony-id != [colony-id] of ants_agent and health > 0 ]
+   
+
+  ifelse any? inimigos [
+    let alvo min-one-of inimigos [distance ants_agent]
+    face alvo
+    fd 1
+
+    ifelse distance alvo < 1 [
+      ask alvo [
+        set health health - [attack] of ants_agent
+        if health <= 0 [ die ]
+      ]
+
+      ifelse [role] of ants_agent = "soldado"[
+        ifelse (alvo != nobody and member? alvo turtles and [role] of alvo = "rainha")[
+          set reward reward + 100
+        ] [
+          set reward reward + 20
+        ]
+      ] [
+        set reward reward - 1
+      ]
+    ] [
+      set reward 0
+    ]
+  ] [
+    set reward reward - 10
+  ]
+end
+
+to furt [ants_agent]
+  let inimigos other turtles with [colony-id != [colony-id] of ants_agent and health > 0]
+  ifelse any? inimigos [
+    let inimigo-proximo min-one-of inimigos [distance ants_agent]
+    ask ants_agent [
+      set boost 2
+      set reward reward + 4
+    ]
+  ] [
+    set reward reward - 10
+  ]
+end
+
+to return_for_rainha [ ants_agent ]
+  let meu-role [role] of ants_agent
+  let minha-rainha one-of rainhas with [colony-id = [colony-id] of ants_agent]
+
+  ifelse meu-role = "rainha" [
+    ask ants_agent [
+      set reward reward - 100
+    ]
+  ]
+  [
+    ifelse meu-role = "soldado" [
+      ask ants_agent [
+        set reward reward + 0 
+      ]
+    ]
+    [ ; operária
+      ask ants_agent [
+        ifelse carregando [
+          if minha-rainha != nobody [
+            face minha-rainha
+            fd 1
+            ifelse distance minha-rainha < 2 [
+              set carregando false
+              set reward reward + 100
+              ask minha-rainha [
+                set fertilidade fertilidade + 1
+              ]
+            ] [
+              set reward reward + 0.2
+            ]
+          ]
+        ] [
+          set reward reward - 1000
         ]
       ]
     ]
-
-    set energia energia - 1
- 	  if energia <= 0 [ die ]
   ]
-
-    
-   ask soldados [
-     if any? operarias in-radius 2 [
-       let inimigo one-of turtles with [ color = red ] in-radius 5
-       if inimigo != nobody [		 ;; Aprimorar: se é alidado ou não
-         ;ask inimigo [ die ]
-         set forca forca - 1
-
-         ;; if aliado == (func protejer)  else (func combate)
-       ]
-       
-       rt random 60
-       rt random 60
-       fd 1
-     ]
-  ]
-  
-  ask rainhas [
-    if ticks mod 100 = 0 [
-    
-      let resultado max list 1 (floor (fertilidade / 3))			;; Manipulando o quanto a fertilidade vai impactar na geração de outras formigas
-      
-      hatch-operarias resultado [									;; Filhas da respectiva rainha
-        set color red
-       	setxy (xcor + random 3 - 1) (ycor + random 3 - 1)
-        set energia 100
-      ]
-      set filhos filhos + 1
-  	]
-    if any? operarias with [ carregando = true ] in-radius 4 [	    ;; A rainha vai pegar a comida em um raio de 4. Se fosse 2 a operária ia primeira ficar como False depois vinha para essa função, o qual daria errado e não adcionaria nada
-      set fertilidade fertilidade + 1
-    ]
-  ]
-
- 	;; Dados para serem plotados
- 	if rainha-principal != nobody [
-    set-current-plot "Fertilidade da Rainha"
-    plot [fertilidade] of rainha-principal
-  ]
-    set-current-plot "Total de Operarias"
-  	plot count operarias
-  tick
 end
