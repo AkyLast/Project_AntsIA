@@ -3,6 +3,8 @@ extensions [ table ]
 breed [operarias operaria]
 breed [soldados soldado]
 breed [rainhas rainha]
+breed [arvores arvore]  ; New breed for trees
+
 
 
 globals [
@@ -18,10 +20,7 @@ globals [
   max-arvores             ;; número máximo de árvores
 ]
 
-patches-own [
-  eh-arvore?             ;; indica se o patch contém uma árvore
-  idade-arvore            ;; idade da árvore (para crescimento ou remoção futura)
-]
+
 
 
 turtles-own [
@@ -36,11 +35,13 @@ turtles-own [
 
   state                 ; [ xcor ycor carrying enemy_near enemy_distance ]
   reward
+  idade-arvore          ; moved from patches-own to here
 ]
 
 operarias-own [ carregando ]
 soldados-own [ target ]
 rainhas-own [ filhos fertilidade ]
+arvores-own [ ]  ; No additional attributes needed beyond base turtle attributes;arvores-own [idade-arvore]
 
 
 
@@ -71,12 +72,9 @@ to setup-world
     set pcolor yellow
   ]
   
-  ask patches [
-    set eh-arvore? false  ; ← Isso garante que comece como booleano
-  ]
   
-  ;; Geração inicial de árvores
-  criar-arvores-iniciais
+  
+  criar-arvores-iniciais  ;; Geração inicial de árvores
 
   set actions [ "search_food" "combat" "furt" "giveQueen"  ]
 
@@ -129,8 +127,10 @@ to-report define-state-rainhas
   report (word xcor "|" ycor "|" enemy-near? "|" enemy-distance "|" health)
 end
 
+
 to setup-ants
   create-rainhas 1 [
+    set shape "bug"
     set color white
     set cor-colonia white
     setxy min-pxcor + 2 min-pycor + 2
@@ -146,6 +146,7 @@ to setup-ants
   set rainha-principal one-of rainhas with [colony-id = 1]
 
   create-operarias 150 [
+    set shape "bug"
     set color red
     set cor-colonia red
     setxy (min-pxcor + 2 + random-float 5) (min-pycor + 2 + random-float 3 )
@@ -159,6 +160,7 @@ to setup-ants
   ]
 
   create-soldados 30 [
+    set shape "bug"
     set color blue
     set cor-colonia blue
     setxy (min-pxcor + 2 + random-float 5) (min-pycor + 2 + random-float 2 )
@@ -172,6 +174,7 @@ to setup-ants
 
   ;; Colônia 2 (canto superior direito)
   create-rainhas 1 [
+    set shape "bug"
     set color orange + 2
     set cor-colonia orange + 2
     setxy max-pxcor - 2 max-pycor - 2
@@ -187,6 +190,7 @@ to setup-ants
   set rainha-rival one-of rainhas with [colony-id = 2]
 
   create-operarias 150 [
+    set shape "bug"
     set color green + 2
     set cor-colonia green + 2
     setxy (max-pxcor - 1 - random-float 5 ) (max-pycor - 2 - random-float 3 )
@@ -200,6 +204,7 @@ to setup-ants
   ]
 
   create-soldados 30 [
+    set shape "bug"
     set color violet
     set cor-colonia violet
     setxy (max-pxcor - 2 - random-float 5 ) (max-pycor - 2 - random-float 2 )
@@ -214,32 +219,59 @@ to setup-ants
 end
 
 ;; ===================== PLANTIO DE ÁRVORES =====================
-;to criar-arvores-iniciais
- ; let candidatos patches with [pcolor = brown and not eh-arvore?]
-  ;if any? candidatos [
-    ;ask n-of (min (list max-arvores count candidatos)) candidatos [
-     ; set eh-arvore? true
-     ; set pcolor (scale-color green 8 0 10)
-     ; set idade-arvore random 500
-   ; ]
- ; ]
-;end
 
 to criar-arvores-iniciais
-  let arvores-criadas 0
+  create-arvores max-arvores [
+    set shape "tree"  ; adiciona um formanto de arvore
+    set color scale-color green 8 0 10
+    set role "arvore"
+    set idade-arvore random 50
+    set health 100  ; Trees can have health too
+    set size 2  ; faz que as arvores tenham um tamanho maior que formigas
+    setxy random-xcor * 0.9 random-ycor * 0.9
+    ; evita colocar arvore onde tem comida e obstaculos
+    while [pcolor = green or pcolor = yellow] [
+      setxy random-xcor * 0.9 random-ycor * 0.9
+    ]
+  ]
+end
+
+to grow-trees
+  ;; Fase 1: Envelhecimento e morte das árvores existentes
+  ask arvores [
+    set idade-arvore idade-arvore + 1
+    
+    ;; Árvores morrem quando muito velhas (idade > 100)
+    if idade-arvore > 100 [
+      die
+    ]
+  ]
   
-  while [arvores-criadas < max-arvores] [
-    ; Seleciona qualquer patch que ainda não tem árvore
-    ask one-of patches with [not eh-arvore?] [  ; <- Correção aplicada aqui
-      if random-float 1 < 0.02 [  ; 2% de chance por patch válido
-        set eh-arvore? true
-        set pcolor (scale-color green 8 0 10)
-        set idade-arvore random 500
-        set arvores-criadas arvores-criadas + 1
+ ;; --- Fase 2: Reposição de árvores ---
+  let arvores-atuais count arvores
+  let arvores-faltantes max (list 0 (max-arvores - arvores-atuais))  ; Garante número positivo
+
+  if arvores-faltantes > 0 [
+    let candidatos patches with [
+      pcolor != green and  ; Não nasce em cima de comida
+      pcolor != yellow and ; Nem em obstáculos
+      not any? turtles-here with [role != "arvore"]  ; Evita formigas/rainhas
+    ]
+
+    if any? candidatos [
+      create-arvores min (list arvores-faltantes (count candidatos)) [
+        set shape "tree"
+        set color scale-color green 8 0 10
+        set role "arvore"
+        set idade-arvore 0
+        set size 2
+        move-to one-of candidatos  ; Posiciona em um local válido
       ]
     ]
   ]
 end
+
+  
 
 to observar
   if health <= 0 [ die stop ] 
@@ -306,17 +338,15 @@ to verificar-fim-de-jogo
     stop
   ]
 end
-
-
 to go
-  ask turtles with [health > 0] [
+  ask turtles with [role != "arvore" and health > 0] [
     observar
     escolher
     agir
-  ]  
+  ]
+  grow-trees
 
   verificar-fim-de-jogo
-
   tick
 end
 
