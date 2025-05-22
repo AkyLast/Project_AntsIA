@@ -1,0 +1,800 @@
+; ==============================================
+; DEFINIÇÕES DE RAÇAS E VARIÁVEIS GLOBAIS
+; ==============================================
+
+extensions [ table ]  ; Extensão para usar tabelas no Q-learning
+
+; Definição dos tipos de formigas:
+breed [operarias operaria]  ; Formigas trabalhadoras (coletam comida)
+breed [soldados soldado]    ; Formigas soldado (defendem a colônia)
+breed [rainhas rainha]      ; Rainhas (reprodução e liderança)
+
+globals [
+  ; Sistema Q-learning (aprendizado por reforço)
+  q-table-operarias  ; Tabela Q para operárias (armazena conhecimento)
+  q-table-soldados   ; Tabela Q para soldados
+  q-table-rainhas    ; Tabela Q para rainhas
+  actions            ; Ações possíveis: ["search_food" "combat" "furt" "giveQueen"]
+  epochs             ; Contador de ciclos de treinamento
+  
+  ; Hierarquia de colônias
+  rainha-principal   ; Referência à rainha da colônia 1 (time vermelho)
+  rainha-rival       ; Referência à rainha da colônia 2 (time verde)
+  colony-id-counter  ; Contador para gerar IDs únicos de colônia
+  
+  ; Ambiente dinâmico
+  ambiente-atual     ; Estado atual: "normal" ou "chuva"
+  tempo-restante     ; Tempo até próxima mudança de ambiente
+  ambiente-anterior  ; Ambiente anterior (para transições)
+]
+
+; ==============================================
+; ATRIBUTOS DOS PATCHES (ÁREAS DO MUNDO)
+; ==============================================
+
+patches-own [
+  ; Sistema de feromônios (comunicação química)
+  chemical           ; Intensidade do feromônio no patch
+  nest?              ; Verdadeiro se é parte do ninho
+  nest-scent         ; Intensidade do cheiro do ninho
+  
+  ; Comida e recursos
+  food               ; Quantidade de comida disponível
+  food-source-number ; ID da fonte de comida (0 = não é fonte)
+  
+  ; Ambiente dinâmico
+  efeito-ambiente    ; "normal" ou "úmido" (afeta velocidade)
+  gota-ativa?        ; Verdadeiro se há gota de chuva visível
+  frames-gota        ; Duração da animação da gota
+]
+
+; ==============================================
+; ATRIBUTOS DAS FORMIGAS (TURTLES)
+; ==============================================
+
+turtles-own [
+  ; Identificação
+  colony-id      ; ID da colônia (1 ou 2)
+  role           ; Tipo: "operaria", "soldado" ou "rainha"
+  cor-colonia    ; Cor representativa da colônia
+  
+  ; Atributos físicos
+  health         ; Pontos de vida (0 = morte)
+  energy         ; Energia para realizar ações
+  attack         ; Poder de ataque em combate
+  
+  ; Sistema Q-learning
+  state          ; Estado atual (posição, inimigos, saúde, etc.)
+  reward         ; Recompensa acumulada (para aprendizado)
+  prev-x prev-y  ; Posição anterior (para verificar limites)
+  
+  ; Comportamento
+  boost          ; Velocidade temporária para fugir
+]
+
+; Atributos específicos de cada tipo:
+operarias-own [ carregando ]  ; Verdadeiro se está carregando comida
+soldados-own [ target ]       ; Alvo de combate (inimigo)
+rainhas-own [
+  filhos        ; Número de descendentes produzidos
+  fertilidade   ; Capacidade de reprodução
+]
+
+; ==============================================
+; CONFIGURAÇÃO INICIAL
+; ==============================================
+
+to setup
+  clear-all  ; Limpa a simulação anterior
+  set-default-shape turtles "bug"  ; Define o visual das formigas
+  
+  ; Configuração do ambiente dinâmico
+  set ambiente-atual "normal"
+  set tempo-restante 150  ; Tempo inicial até mudança
+  set ambiente-anterior "normal"
+  
+  ; Inicialização do Q-learning
+  set epochs 0
+  set actions ["search_food" "combat" "furt" "giveQueen"]
+  set q-table-operarias table:make  ; Cria tabelas vazias
+  set q-table-soldados table:make
+  set q-table-rainhas table:make
+  
+  ; Configura o mundo e as formigas
+  setup-world
+  setup-ants
+  reset-ticks  ; Prepara o contador de tempo
+end
+
+; Configura o ambiente (comida, ninhos, obstáculos)
+to setup-world
+  ask patches [
+    ; Ninho da colônia 1 (canto inferior esquerdo)
+    set nest? (distancexy (min-pxcor + 2) (min-pycor + 2)) < 5
+    set nest-scent 200 - distancexy (min-pxcor + 2) (min-pycor + 2)
+    
+    ; Ninho da colônia 2 (canto superior direito)
+    if (distancexy (max-pxcor - 2) (max-pycor - 2)) < 5 [
+      set nest? true
+      set nest-scent 200 - distancexy (max-pxcor - 2) (max-pycor - 2)
+    ]
+    
+    ; Inicialização de comida
+    set food 0
+    set food-source-number 0
+    
+    ; Cria fontes de comida aleatórias (3% de chance)
+    if random-float 1 < 0.03 [
+      set food-source-number 1 + random 3  ; IDs 1-3
+      set food 1 + random 3                ; 1-3 unidades
+    ]
+    
+    ; Configuração inicial do ambiente
+    set chemical 0
+    set efeito-ambiente "normal"
+    set gota-ativa? false
+    set frames-gota 0
+    recolor-patch  ; Atualiza a cor visual
+  ]
+  
+  ; Cria obstáculos (0.5% de chance)
+  ask patches with [random-float 1 < 0.005] [
+    set pcolor yellow
+  ]
+end
+
+; Cria as formigas iniciais
+to setup-ants
+  ; Colônia 1 (vermelha - canto inferior esquerdo)
+  create-rainhas 1 [
+    set color white
+    set cor-colonia white
+    setxy min-pxcor + 2 min-pycor + 2  ; Posição do ninho
+    set colony-id 1
+    set role "rainha"
+    set health 250    ; Alta resistência
+    set energy 600    ; Muita energia
+    set attack 0      ; Não ataca
+    set state define-state-rainhas
+    set filhos 0
+    set fertilidade 1
+  ]
+  set rainha-principal one-of rainhas with [colony-id = 1]
+
+  ; Operárias da colônia 1 (150 unidades)
+  create-operarias 150 [
+    set color red
+    set cor-colonia red
+    ; Posição aleatória próxima ao ninho
+    setxy (min-pxcor + 2 + random-float 5) (min-pycor + 2 + random-float 3)
+    set colony-id 1
+    set role "operaria"
+    set health 120    ; Resistência média
+    set energy 270    ; Energia moderada
+    set attack 1      ; Ataque fraco
+    set state define-state-operarias
+    set carregando false  ; Começa sem comida
+  ]
+
+  ; Soldados da colônia 1 (30 unidades)
+  create-soldados 30 [
+    set color blue
+    set cor-colonia blue
+    setxy (min-pxcor + 2 + random-float 5) (min-pycor + 2 + random-float 2)
+    set colony-id 1
+    set role "soldado"
+    set health 70     ; Resistência baixa
+    set energy 300    ; Boa energia para combate
+    set attack 5      ; Ataque forte
+    set state define-state-soldados
+  ]
+
+  ; Colônia 2 (verde - canto superior direito)
+  create-rainhas 1 [
+    set color orange + 2
+    set cor-colonia orange + 2
+    setxy max-pxcor - 2 max-pycor - 2  ; Posição do ninho
+    set colony-id 2
+    set role "rainha"
+    set health 250
+    set energy 600
+    set attack 0
+    set state define-state-rainhas
+    set filhos 0
+    set fertilidade 1
+  ]
+  set rainha-rival one-of rainhas with [colony-id = 2]
+
+  ; Operárias da colônia 2 (150 unidades)
+  create-operarias 150 [
+    set color green + 2
+    set cor-colonia green + 2
+    setxy (max-pxcor - 1 - random-float 5) (max-pycor - 2 - random-float 3)
+    set colony-id 2
+    set role "operaria"
+    set health 120
+    set energy 270
+    set attack 1
+    set state define-state-operarias
+    set carregando false
+  ]
+
+  ; Soldados da colônia 2 (30 unidades)
+  create-soldados 30 [
+    set color violet
+    set cor-colonia violet
+    setxy (max-pxcor - 2 - random-float 5) (max-pycor - 2 - random-float 2)
+    set colony-id 2
+    set role "soldado"
+    set health 70
+    set energy 300
+    set attack 5
+    set state define-state-soldados
+    set target nobody  ; Inicia sem alvo
+  ]
+end
+
+; ==============================================
+; LOOP PRINCIPAL DE SIMULAÇÃO
+; ==============================================
+
+to go
+  ; 1. Troca de ambiente (normal/chuva) quando o tempo acaba
+  if tempo-restante <= 0 [
+    set ambiente-anterior ambiente-atual
+    set ambiente-atual one-of ["normal" "chuva"]  ; Escolhe aleatoriamente
+    set tempo-restante random 100 + 150  ; Novo tempo até próxima mudança
+
+    ; Recarrega comida quando volta ao normal
+    if ambiente-anterior != "normal" and ambiente-atual = "normal" [
+      ask patches with [food-source-number > 0] [
+        set food food + one-of [1 2 3]  ; Adiciona 1-3 unidades
+      ]
+    ]
+  ]
+  set tempo-restante tempo-restante - 1  ; Decrementa o contador
+
+  ; 2. Aplica efeitos do ambiente atual
+  ask patches [
+    if ambiente-atual = "normal" [ aplicar-normal ]
+    if ambiente-atual = "chuva" [ aplicar-chuva ]
+    recolor-patch  ; Atualiza cores visuais
+  ]
+
+  ; 3. Difusão de feromônios (comunicação química)
+  diffuse chemical 0.5  ; Espalha os feromônios
+
+  ; 4. Comportamento das formigas vivas usando Q-learning
+  ask turtles with [health > 0] [
+    observar    ; Coleta informações do ambiente
+    escolher    ; Escolhe ação baseada no Q-learning
+    agir        ; Executa a ação escolhida
+  ]
+
+  ; 5. Evaporação gradual dos feromônios
+  ask patches [
+    set chemical chemical * 0.95  ; Reduz 5% a cada tick
+  ]
+
+  ; 6. Animação de gotas de chuva
+  ask patches with [gota-ativa?] [
+    set frames-gota frames-gota - 10
+    if frames-gota <= 0 [
+      set gota-ativa? false  ; Remove gota quando o tempo acaba
+    ]
+  ]
+
+  ; 7. Verifica estado das rainhas e condições de fim de jogo
+  verificar-morte-de-rainha
+  verificar-fim-de-jogo
+
+  tick  ; Avança o contador de tempo
+end
+
+; ==============================================
+; FUNÇÕES DE AMBIENTE
+; ==============================================
+
+; Configura patches para estado normal
+to aplicar-normal
+  set efeito-ambiente "normal"
+  set gota-ativa? false  ; Remove todas as gotas
+end
+
+; Configura patches para estado de chuva
+to aplicar-chuva
+  set efeito-ambiente "úmido"  ; Reduz velocidade das formigas
+  ; Gera gotas de chuva aleatórias (3% de chance)
+  if random 100 < 3 and not nest? and food = 0 [
+    set gota-ativa? true
+    set frames-gota 1 + random 2  ; Duração aleatória
+  ]
+end
+
+; Atualiza a cor visual dos patches baseado em seu estado
+to recolor-patch
+  if nest? [ 
+    ; Colore diferente para cada colônia
+    if any? rainhas-here with [colony-id = 1] [ set pcolor violet ]
+    if any? rainhas-here with [colony-id = 2] [ set pcolor violet - 2 ]
+    stop 
+  ]
+  
+  ; Cores para fontes de comida
+  if food > 0 [
+    if food-source-number = 1 [ set pcolor cyan stop ]
+    if food-source-number = 2 [ set pcolor sky stop ]
+    if food-source-number = 3 [ set pcolor blue stop ]
+  ]
+  
+  ; Efeitos visuais de chuva
+  if gota-ativa? [ set pcolor blue - 1 stop ]
+  if ambiente-atual = "chuva" [ set pcolor green - 1 stop ]
+  
+  set pcolor green  ; Cor padrão (grama)
+end
+
+; ==============================================
+; SISTEMA Q-LEARNING (APRENDIZADO POR REFORÇO)
+; ==============================================
+
+; Define o estado atual de uma operária
+to-report define-state-operarias
+  let enemy-turtles other turtles with [colony-id != [colony-id] of myself]
+  let enemy-near? false
+  let enemy-distance 0
+  let carrying? [carregando] of self
+
+  ; Detecta inimigos próximos
+  if any? enemy-turtles [
+    let nearest-enemy min-one-of enemy-turtles [distance myself]
+    set enemy-near? true
+    set enemy-distance distance nearest-enemy
+  ]
+
+  ; Retorna estado como string formatada
+  report (word xcor "|" ycor "|" carrying? "|" enemy-near? "|" enemy-distance "|" health "|" [chemical] of patch-here)
+end
+
+; Define o estado atual de um soldado (similar às operárias)
+to-report define-state-soldados
+  let enemy-turtles other turtles with [colony-id != [colony-id] of myself]
+  let enemy-near? false
+  let enemy-distance 0
+
+  if any? enemy-turtles [
+    let nearest-enemy min-one-of enemy-turtles [distance myself]
+    set enemy-near? true
+    set enemy-distance distance nearest-enemy
+  ]
+
+  report (word xcor "|" ycor "|" enemy-near? "|" enemy-distance "|" health "|" [chemical] of patch-here)
+end
+
+; Define o estado atual de uma rainha
+to-report define-state-rainhas
+  let enemy-turtles other turtles with [colony-id != [colony-id] of myself]
+  let enemy-near? false
+  let enemy-distance 0
+
+  if any? enemy-turtles [
+    let nearest-enemy min-one-of enemy-turtles [distance myself]
+    set enemy-near? true
+    set enemy-distance distance nearest-enemy
+  ]
+
+  report (word xcor "|" ycor "|" enemy-near? "|" enemy-distance "|" health "|" [chemical] of patch-here)
+end
+
+; Observa o ambiente e atualiza o estado
+to observar
+  if health <= 0 [ die stop ]  ; Remove formigas mortas
+  ; Atualiza estado baseado no tipo de formiga
+  if role = "rainha"   [ set state define-state-rainhas ]
+  if role = "soldado"  [ set state define-state-soldados ]
+  if role = "operaria" [ set state define-state-operarias ]
+end
+
+; Escolhe uma ação usando Q-learning
+to escolher
+  ; Seleciona a tabela Q correta
+  let q-table 0
+  if role = "rainha"   [ set q-table q-table-rainhas ]
+  if role = "soldado"  [ set q-table q-table-soldados ]
+  if role = "operaria" [ set q-table q-table-operarias ]
+
+  ; Escolhe ação e armazena com o estado atual
+  let action escolher-action q-table state
+  set state list state action
+end
+
+; Executa a ação escolhida
+to agir
+  if health <= 0 [ die stop ]  ; Verifica novamente se está vivo
+  
+  ; Seleciona tabela Q correta
+  let q-table 0
+  if role = "rainha"   [ set q-table q-table-rainhas ]
+  if role = "soldado"  [ set q-table q-table-soldados ]
+  if role = "operaria" [ set q-table q-table-operarias ]
+
+  ; Executa ação e atualiza Q-table
+  let action last state
+  let old-state item 0 state
+  let resul execute self action  ; Executa ação e obtém resultados
+  let state_future item 0 resul  ; Novo estado após ação
+  let reward_ants item 1 resul   ; Recompensa obtida
+
+  update-Q old-state action reward_ants state_future  ; Aprende com a experiência
+end
+
+; ==============================================
+; FUNÇÕES AUXILIARES DO Q-LEARNING
+; ==============================================
+
+; Escolhe ação usando estratégia epsilon-greedy
+to-report escolher-action [ q-table state_agents ]
+  let epsilon 0.3  ; 30% de chance de explorar (ação aleatória)
+  ifelse random-float 1 < epsilon [
+    report one-of actions  ; Exploração: escolhe aleatoriamente
+  ] [
+    report best-action q-table state_agents  ; Exploração: escolhe melhor ação conhecida
+  ]
+end
+
+; Encontra a melhor ação conhecida para um estado
+to-report best-action [ q-table state_agents ]
+  let values []
+  ; Obtém valores Q para todas ações possíveis
+  foreach actions [ a ->
+    ifelse table:has-key? q-table (list state_agents a) [
+      set values lput (table:get q-table (list state_agents a)) values
+    ] [
+      set values lput 0 values  ; Valor padrão se ação não conhecida
+    ]
+  ]
+  ; Retorna ação com maior valor Q
+  let best-index position max values values
+  report item best-index actions
+end
+
+; Obtém valor Q para um par estado-ação
+to-report q-value [ q-table state_agents action ]
+  if table:has-key? q-table (list state_agents action) [
+    report table:get q-table (list state_agents action)
+  ]
+  report random-float 0.1  ; Valor pequeno aleatório para encorajar exploração
+end
+
+; Executa uma ação específica e retorna novo estado e recompensa
+to-report execute [ ants_agent action ]
+  if [health] of ants_agent <= 0 [
+    report (list [state] of ants_agent -9999)  ; Estado irrelevante e grande punição
+  ]
+  
+  ; Executa a ação correspondente
+  if action = "search_food" [
+    move ants_agent
+    ; Operárias deixam feromônio ao procurar comida
+    if [role] of ants_agent = "operaria" and not [carregando] of ants_agent [
+      ask patch-here [ set chemical chemical + 60 ]
+    ]
+  ]
+  
+  if action = "combat" [
+    combat ants_agent
+  ]
+  
+  if action = "furt" [
+    furt ants_agent
+  ]
+  
+  if action = "giveQueen" [
+    return_for_rainha ants_agent
+    ; Operárias deixam feromônio ao retornar com comida
+    if [role] of ants_agent = "operaria" and [carregando] of ants_agent [
+      ask patch-here [ set chemical chemical + 80 ]
+    ]
+  ]
+
+  ; Determina novo estado após a ação
+  let new_state 0
+  if [role] of ants_agent = "operaria" [
+    set new_state [define-state-operarias] of ants_agent
+  ]
+  if [role] of ants_agent = "soldado" [
+    set new_state [define-state-soldados] of ants_agent
+  ]
+  if [role] of ants_agent = "rainha" [
+    set new_state [define-state-rainhas] of ants_agent
+  ]
+
+  let earned_reward [reward] of ants_agent
+  report (list new_state earned_reward)  ; Retorna novo estado e recompensa
+end
+
+; Atualiza a tabela Q usando a equação de Bellman
+to update-Q [ state-agents action reward-ants state-future ]
+  ; Chama a função de atualização específica para cada tipo
+  if role = "rainha" [
+    queen_atualizar-Q state-agents action reward-ants state-future
+  ]
+  if role = "soldado" [
+    soldier_atualizar-Q state-agents action reward-ants state-future
+  ]
+  if role = "operaria" [
+    operarias_atualizar-Q state-agents action reward-ants state-future
+  ]
+end
+
+; Atualização da tabela Q para rainhas
+to queen_atualizar-Q [state-agents action reward-ants state-future]
+  let alpha 0.5  ; Taxa de aprendizado
+  let gamma 0.9  ; Fator de desconto
+  
+  ; Fórmula de atualização Q-learning:
+  ; Q(s,a) = Q(s,a) + α * (recompensa + γ * maxQ(s',a') - Q(s,a))
+  let q-last q-value q-table-rainhas state-agents action
+  let best-future max map [ a -> q-value q-table-rainhas state-future a ] actions
+  let q-new q-last + alpha * ( reward-ants + gamma * best-future - q-last )
+
+  ; Armazena novo valor na tabela Q
+  table:put q-table-rainhas (list state-agents action) q-new
+end
+
+; Atualização da tabela Q para soldados (similar à rainha)
+to soldier_atualizar-Q [state-agents action reward-ants state-future]
+  let alpha 0.5
+  let gamma 0.9
+
+  let q-last q-value q-table-soldados state-agents action
+  let best-future max map [ a -> q-value q-table-soldados state-future a ] actions
+  let q-new q-last + alpha * ( reward-ants + gamma * best-future - q-last )
+
+  table:put q-table-soldados (list state-agents action) q-new
+end
+
+; Atualização da tabela Q para operárias (similar às outras)
+to operarias_atualizar-Q [state-agents action reward-ants state-future]
+  let alpha 0.5
+  let gamma 0.9
+
+  let q-last q-value q-table-operarias state-agents action
+  let best-future max map [ a -> q-value q-table-operarias state-future a ] actions
+  let q-new q-last + alpha * ( reward-ants + gamma * best-future - q-last )
+
+  table:put q-table-operarias (list state-agents action) q-new
+end
+
+; ==============================================
+; COMPORTAMENTOS DAS FORMIGAS
+; ==============================================
+
+; Movimento baseado no ambiente e feromônios
+to move [ants_agents]
+  if [health] of ants_agents <= 0 [ stop ]
+  
+  ask ants_agents [
+    set prev-x xcor  ; Armazena posição anterior
+    set prev-y ycor
+
+    ; Ajusta velocidade baseado no ambiente
+    let velocidade 1.0
+    if [efeito-ambiente] of patch-here = "úmido" [ set velocidade 0.4 ]  ; Mais lento na chuva
+    
+    ; Operárias seguem trilhas de feromônio
+    if role = "operaria" and not carregando and [chemical] of patch-here > 0.1 [
+      uphill-chemical  ; Navega em direção a mais feromônio
+    ]
+    
+    ; Soldados retornam ao ninho se estiverem longe
+    if role = "soldado" [
+      let minha-rainha one-of rainhas with [colony-id = [colony-id] of myself]
+      if minha-rainha != nobody and distance minha-rainha > 10 [
+        uphill-nest-scent  ; Segue o cheiro do ninho
+      ]
+    ]
+    
+    ; Movimento aleatório com pequenas variações
+    rt random 40
+    lt random 40
+    if not can-move? velocidade [ rt 180 ]  ; Inverte se encontrar obstáculo
+    fd velocidade
+    
+    ; Operárias coletam comida se encontrar
+    if role = "operaria" and not carregando and [food] of patch-here > 0 [
+      set carregando true
+      ask patch-here [ set food food - 1 ]  ; Remove comida do patch
+      set reward reward + 50  ; Recompensa por encontrar comida
+    ]
+    
+    check-bounds self  ; Verifica se saiu dos limites
+  ]
+end
+
+; Combate contra formigas inimigas
+to combat [ants_agent]
+  if [health] of ants_agent <= 0 [ stop ]
+
+  let inimigos other turtles with [colony-id != [colony-id] of ants_agent and health > 0]
+   
+  ifelse any? inimigos [
+    let alvo min-one-of inimigos [distance ants_agent]  ; Inimigo mais próximo
+    face alvo
+    fd 1
+
+    ifelse distance alvo < 1 [  ; Se alcançou o inimigo
+      ask alvo [
+        set health health - [attack] of ants_agent  ; Causa dano
+        if health <= 0 [ 
+          die  ; Remove inimigo se morreu
+          ask ants_agent [ set reward reward + 20 ]  ; Recompensa por matar
+        ]
+      ]
+
+      ; Recompensas adicionais para soldados
+      ifelse [role] of ants_agent = "soldado" [
+        if (alvo != nobody and member? alvo turtles and [role] of alvo = "rainha") [
+          set reward reward + 100  ; Grande recompensa por atacar rainha inimiga
+        ]
+      ] [
+        set reward reward - 1  ; Operárias não são boas em combate
+      ]
+    ] [
+      set reward 0  ; Sem recompensa se não alcançou
+    ]
+  ] [
+    set reward reward - 10  ; Penalidade por tentar combate sem inimigos
+  ]
+end
+
+; Fuga rápida de inimigos
+to furt [ants_agent]
+  let inimigos other turtles with [colony-id != [colony-id] of ants_agent and health > 0]
+  ifelse any? inimigos [
+    let inimigo-proximo min-one-of inimigos [distance ants_agent]
+    ask ants_agent [
+      set boost 2  ; Aumento temporário de velocidade
+      set reward reward + 4  ; Pequena recompensa por fugir com sucesso
+      face inimigo-proximo
+      rt 180  ; Vira para direção oposta
+      fd 1 + boost  ; Move-se rapidamente
+    ]
+  ] [
+    set reward reward - 10  ; Penalidade por fugir sem motivo
+  ]
+end
+
+; Retorno ao ninho (principalmente para operárias com comida)
+to return_for_rainha [ ants_agent ]
+  let meu-role [role] of ants_agent
+  let minha-rainha one-of rainhas with [colony-id = [colony-id] of ants_agent]
+
+  ifelse meu-role = "rainha" [
+    ask ants_agent [
+      set reward reward - 100  ; Rainhas não devem executar esta ação
+    ]
+  ]
+  [
+    ifelse meu-role = "soldado" [
+      ask ants_agent [
+        ; Soldados podem proteger a rainha
+        if minha-rainha != nobody [
+          face minha-rainha
+          fd 1
+          if distance minha-rainha < 3 [
+            set reward reward + 5  ; Pequena recompensa por proteger
+          ]
+        ]
+      ]
+    ]
+    [ ; operária
+      ask ants_agent [
+        ifelse carregando [
+          if minha-rainha != nobody [
+            face minha-rainha
+            fd 1
+            ifelse distance minha-rainha < 2 [  ; Chegou no ninho
+              set carregando false
+              set reward reward + 100  ; Grande recompensa por entregar comida
+              ask minha-rainha [
+                set fertilidade fertilidade + 1  ; Aumenta capacidade reprodutiva
+              ]
+            ] [
+              set reward reward + 0.2  ; Pequena recompensa por se aproximar
+            ]
+          ]
+        ] [
+          set reward reward - 1000  ; Enorme penalidade por retornar sem comida
+        ]
+      ]
+    ]
+  ]
+end
+
+; Verifica se a formiga saiu dos limites do mundo
+to check-bounds [ant]
+  ask ant [
+    if xcor > max-pxcor or xcor < min-pxcor or
+       ycor > max-pycor or ycor < min-pycor [
+      set xcor prev-x  ; Retorna à posição anterior
+      set ycor prev-y
+      set reward reward - 100  ; Penalidade por sair dos limites
+    ]
+  ]
+end
+
+; ==============================================
+; NAVEGAÇÃO POR FEROMÔNIOS E CHEIRO
+; ==============================================
+
+; Navega em direção a patches com mais cheiro de ninho
+to uphill-nest-scent
+  let scent-ahead nest-scent-at-angle 0    ; Cheiro à frente
+  let scent-right nest-scent-at-angle 45   ; Cheiro à direita
+  let scent-left nest-scent-at-angle -45   ; Cheiro à esquerda
+  
+  ; Vira para direção com mais cheiro
+  if (scent-right > scent-ahead) or (scent-left > scent-ahead) [
+    ifelse scent-right > scent-left [ rt 45 ] [ lt 45 ]
+  ]
+end
+
+; Navega em direção a patches com mais feromônio (similar ao cheiro)
+to uphill-chemical
+  let scent-ahead chemical-scent-at-angle 0
+  let scent-right chemical-scent-at-angle 45
+  let scent-left chemical-scent-at-angle -45
+  if (scent-right > scent-ahead) or (scent-left > scent-ahead) [
+    ifelse scent-right > scent-left [ rt 45 ] [ lt 45 ]
+  ]
+end
+
+; Mede cheiro do ninho em uma direção específica
+to-report nest-scent-at-angle [angle]
+  let p patch-right-and-ahead angle 1  ; Patch na direção especificada
+  if p = nobody [ report 0 ]  ; Retorna 0 se não existir patch
+  report [nest-scent] of p    ; Retorna intensidade do cheiro
+end
+
+; Mede feromônio em uma direção específica (similar ao cheiro)
+to-report chemical-scent-at-angle [angle]
+  let p patch-right-and-ahead angle 1
+  if p = nobody [ report 0 ]
+  report [chemical] of p
+end
+
+; ==============================================
+; VERIFICAÇÃO DE ESTADO DO JOGO
+; ==============================================
+
+; Verifica se alguma rainha morreu e ajusta recompensas
+to verificar-morte-de-rainha
+  ; Verifica rainha da colônia 1
+  if rainha-principal != nobody and not member? rainha-principal turtles [
+    ; Penaliza toda a colônia 1 e recompensa colônia 2
+    ask turtles with [colony-id = 1] [ set reward reward - 1500 ]
+    ask turtles with [colony-id = 2] [ set reward reward + 1500 ]
+    set rainha-principal nobody
+  ]
+
+  ; Verifica rainha da colônia 2
+  if rainha-rival != nobody and not member? rainha-rival turtles [
+    ; Penaliza toda a colônia 2 e recompensa colônia 1
+    ask turtles with [colony-id = 2] [ set reward reward - 1500 ]
+    ask turtles with [colony-id = 1] [ set reward reward + 1500 ]
+    set rainha-rival nobody
+  ]
+end
+
+; Verifica condições de fim de jogo (uma colônia sem formigas vivas)
+to verificar-fim-de-jogo
+  let col1-vivas any? turtles with [colony-id = 1 and health > 0]
+  let col2-vivas any? turtles with [colony-id = 2 and health > 0]
+
+  if not col1-vivas or not col2-vivas [
+    setup  ; Reinicia a simulação
+    set epochs epochs + 1  ; Incrementa contador de épocas
+    stop
+  ]
+end

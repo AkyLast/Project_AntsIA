@@ -1,0 +1,233 @@
+; === VARIÁVEIS GLOBAIS ===
+globals [
+  ambiente-atual       ; Estado atual do ambiente ("normal" ou "chuva")
+  tempo-restante       ; Tempo restante antes de mudar o ambiente
+  ambiente-anterior    ; Armazena o ambiente anterior para lógica de transição
+]
+
+; === VARIÁVEIS POR PATCH ===
+patches-own [
+  chemical             ; Feromônio deixado pelas formigas
+  food                 ; Quantidade de comida presente no patch
+  nest?                ; Indica se o patch faz parte do ninho
+  nest-scent           ; Intensidade do "cheiro" do ninho para navegação
+  food-source-number   ; Identificador da fonte de comida
+  efeito-ambiente      ; "normal", "úmido", etc., influencia velocidade das formigas
+  gota-ativa?          ; Indica se há uma gota de chuva no patch
+  frames-gota          ; Tempo que a gota ainda ficará visível
+]
+
+; === VARIÁVEIS POR FORMIGA ===
+turtles-own [
+  carrying-food?       ; Indica se a formiga está carregando comida
+]
+
+; === CONFIGURAÇÃO INICIAL ===
+to setup
+  clear-all
+  set-default-shape turtles "bug"
+  set ambiente-atual "normal"
+  set tempo-restante 150
+
+  ; Configura cada patch
+  ask patches [
+    ; Define o ninho no centro
+    set nest? (distancexy 0 0) < 5
+    set nest-scent 200 - distancexy 0 0
+    set food 0
+    set food-source-number 0
+
+    ; Três fontes de comida em posições diferentes
+    if (distancexy (0.6 * max-pxcor) 0) < 5 [
+      set food-source-number 1 
+      set food one-of [1 2]
+    ]
+    if (distancexy (-0.6 * max-pxcor) (-0.6 * max-pycor)) < 5 [
+      set food-source-number 2
+      set food one-of [1 2]
+    ]
+    if (distancexy (-0.8 * max-pxcor) (0.8 * max-pycor)) < 5 [
+      set food-source-number 3
+      set food one-of [1 2]
+    ]
+
+    ; Inicialização de variáveis locais do patch
+    set chemical 0
+    set efeito-ambiente "normal"
+    set gota-ativa? false
+    set frames-gota 0
+    recolor-patch
+  ]
+
+  ; Criação das formigas
+  create-turtles 100 [
+    set size 2
+    set color red
+    set carrying-food? false
+  ]
+
+  reset-ticks
+end
+
+; === LAÇO PRINCIPAL DE EXECUÇÃO ===
+to go
+  ; 1. Troca de ambiente se o tempo acabar
+  if tempo-restante <= 0 [
+    set ambiente-anterior ambiente-atual
+    set ambiente-atual one-of ["normal" "chuva"]
+    set tempo-restante random 100 + 150
+
+    ; Recarrega comida quando o tempo volta ao normal
+    if ambiente-anterior != "normal" and ambiente-atual = "normal" [
+      ask patches with [food-source-number > 0] [
+        set food food + one-of [1 2 3]
+      ]
+    ]
+  ]
+  set tempo-restante tempo-restante - 1
+
+  ; 2. Aplica efeitos visuais e ambientais nos patches
+  ask patches [
+    if ambiente-atual = "normal" [ aplicar-normal ]
+    if ambiente-atual = "chuva" [ aplicar-chuva ]
+  ]
+
+  ; 3. Difusão dos feromônios
+  diffuse chemical 0.5
+
+  ; 4. Comportamento das formigas
+  ask turtles [
+    if who < ticks [  ; Evita que todas formigas ajam no mesmo tick
+      if ambiente-atual = "chuva" [
+        if not [nest?] of patch-here [
+          ; Se estiver fora do ninho, volta pra lá
+          return-to-nest
+          wiggle
+          fd 1
+        ]
+        ; Se já estiver no ninho, não faz nada (fica parada)
+      ]
+      if ambiente-atual = "normal" [
+        ifelse color = red [ look-for-food ] [ return-to-nest ]
+        wiggle
+        fd 1
+      ]
+    ]
+  ]
+
+  ; 5. Evaporação dos feromônios e atualização de cor
+  ask patches [
+    set chemical chemical * 0.95
+    recolor-patch
+  ]
+
+  ; 6. Gotas piscando durante chuva
+  ask patches with [gota-ativa?] [
+    set frames-gota frames-gota - 10
+    if frames-gota <= 0 [
+      set gota-ativa? false
+    ]
+  ]
+
+  tick
+end
+
+; === FUNÇÕES DE AMBIENTE ===
+to aplicar-normal
+  set efeito-ambiente "normal"
+  set gota-ativa? false
+end
+
+to aplicar-chuva
+  set efeito-ambiente "úmido"
+  ; Gera gotas de chuva aleatoriamente, mas poucas para não poluir a tela
+  if random 100 < 3 and not nest? and food = 0 [
+    set gota-ativa? true
+    set frames-gota 1 + random 2
+  ]
+end
+
+; === FUNÇÃO PARA COLORIR PATCHES BASEADO NO ESTADO ===
+to recolor-patch
+  if nest? [ set pcolor violet stop ]
+  if food > 0 [
+    if food-source-number = 1 [ set pcolor cyan stop ]
+    if food-source-number = 2 [ set pcolor sky stop ]
+    if food-source-number = 3 [ set pcolor blue stop ]
+  ]
+  if gota-ativa? [ set pcolor blue - 1 stop ]
+  if ambiente-atual = "chuva" [ set pcolor green - 1 stop ]
+  set pcolor green  ; Cor padrão
+end
+
+; === COMPORTAMENTO DAS FORMIGAS ===
+
+; Quando voltam para o ninho
+to return-to-nest
+  ifelse nest? [
+    set color red
+    set carrying-food? false
+    rt 180
+  ] [
+    set chemical chemical + 60
+    uphill-nest-scent
+  ]
+end
+
+; Quando procuram por comida
+to look-for-food
+  if food > 0 [
+    set color orange + 1
+    set carrying-food? true
+    set food food - 1
+    rt 180
+    stop
+  ]
+  ; Segue rastro químico
+  if (chemical >= 0.05) and (chemical < 2) [
+    uphill-chemical
+  ]
+end
+
+; Movimento aleatório influenciado pelo ambiente
+to wiggle
+  let velocidade 1.0
+  if [efeito-ambiente] of patch-here = "úmido" [ set velocidade 0.4 ]
+  rt random 40
+  lt random 40
+  if not can-move? velocidade [ rt 180 ]
+  fd velocidade
+end
+
+; === NAVEGAÇÃO PELO CHEIRO DO NINHO ===
+to uphill-nest-scent
+  let scent-ahead nest-scent-at-angle 0
+  let scent-right nest-scent-at-angle 45
+  let scent-left nest-scent-at-angle -45
+  if (scent-right > scent-ahead) or (scent-left > scent-ahead) [
+    ifelse scent-right > scent-left [ rt 45 ] [ lt 45 ]
+  ]
+end
+
+; NAVEGAÇÃO PELO FEROMÔNIO
+to uphill-chemical
+  let scent-ahead chemical-scent-at-angle 0
+  let scent-right chemical-scent-at-angle 45
+  let scent-left chemical-scent-at-angle -45
+  if (scent-right > scent-ahead) or (scent-left > scent-ahead) [
+    ifelse scent-right > scent-left [ rt 45 ] [ lt 45 ]
+  ]
+end
+
+; Sensores simulando detecção à frente da formiga
+to-report nest-scent-at-angle [angle]
+  let p patch-right-and-ahead angle 1
+  if p = nobody [ report 0 ]
+  report [nest-scent] of p
+end
+
+to-report chemical-scent-at-angle [angle]
+  let p patch-right-and-ahead angle 1
+  if p = nobody [ report 0 ]
+  report [chemical] of p
+end
