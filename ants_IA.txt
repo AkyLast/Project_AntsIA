@@ -1,4 +1,3 @@
-
 extensions [table]
 
 breed [operarias operaria]
@@ -25,6 +24,8 @@ globals [
   ambiente-anterior
 
   max-arvores             ;; número máximo de árvores
+  tempo-producao-frutos   ;; ticks entre produções de frutos
+  max-frutos-por-arvore   ;; máximo de frutos por árvore
 
   ; Sistema de salvamento
   save-file-operarias
@@ -41,6 +42,7 @@ patches-own [
   efeito-ambiente
   gota-ativa?
   frames-gota
+  tempo-fruto-caido
 ]
 
 turtles-own [
@@ -60,11 +62,15 @@ turtles-own [
 operarias-own [carregando]
 soldados-own [target]
 rainhas-own [filhos fertilidade]
-arvores-own [ ]
+arvores-own [
+  frutos
+  tempo-ate-prox-fruto
+]
 
 ; ==================== SETUP ====================
 to setup
   clear-all
+
   ; Configura arquivos de salvamento
   set save-file-operarias "qtable_operarias.json"
   set save-file-soldados "qtable_soldados.json"
@@ -74,6 +80,10 @@ to setup
   set ambiente-atual "normal"
   set tempo-restante 150
   set ambiente-anterior "normal"
+
+  ; Configuração do sistema de frutos
+  set tempo-producao-frutos 50
+  set max-frutos-por-arvore 5
 
   ; Inicialização do Q-learning
   set epochs 0
@@ -96,8 +106,9 @@ to setup
 end
 
 to setup-world
-  set max-arvores 30  ;; Estabelece o número de árvores
-  criar-arvores-iniciais ;criar-arvores-iniciais  ;; Geração inicial de árvores
+  set max-arvores 30
+  criar-arvores-iniciais  ;; Geração inicial de árvores
+  
   ask patches [
     set nest? (distancexy (min-pxcor + 2) (min-pycor + 2)) < 5
     set nest-scent 200 - distancexy (min-pxcor + 2) (min-pycor + 2)
@@ -125,10 +136,7 @@ to setup-world
   ask patches with [random-float 1 < 0.005] [
     set pcolor yellow
   ]
-  
 end
-
-
 
 to setup-ants
   ; Colônia 1
@@ -249,7 +257,10 @@ to go
     escolher
     agir
   ]
+  
   grow-trees
+  frutos-caidos
+  atualizar-frutos-caidos
 
   ask patches [
     set chemical chemical * 0.95
@@ -261,24 +272,52 @@ to go
       set gota-ativa? false
     ]
   ]
+  ;; Gráficos
+  if rainha-principal != nobody [
+    set-current-plot "Fertilidade da Rainha"
+    plot [fertilidade] of rainha-principal
+  ]
+  set-current-plot "Total de Operarias"
+  plot count operarias
+  
+  set-current-plot "Frutos Caídos"
+  set-current-plot-pen "total"
+  plot count patches with [food-source-number = 4]
+  
+  set-current-plot "Fontes de Comida por Tipo"
+  set-current-plot-pen "vegetais"
+  plot count patches with [
+  food-source-number = 1 or
+  food-source-number = 2 or
+  food-source-number = 3
+  ]
+  
+  set-current-plot-pen "frutos caídos"
+  plot count patches with [food-source-number = 4]
+
+  set-current-plot "Frutos Caídos"
+  set-current-plot-pen "total"
+  plot count patches with [food-source-number = 4]
+  
+
 
   verificar-morte-de-rainha
   verificar-fim-de-jogo
   tick
 end
 
-; ===================== PLANTIO DE ÁRVORES =====================
-
+; ==================== TREE SYSTEM ====================
 to criar-arvores-iniciais
   create-arvores max-arvores [
-    set shape "tree"  ; adiciona um formanto de arvore
+    set shape "tree"
     set color scale-color green 8 0 10
     set role "arvore"
     set idade-arvore random 50
-    set health 100  ; Trees can have health too
-    set size 2  ; faz que as arvores tenham um tamanho maior que formigas
+    set health 100
+    set size 2
+    set frutos 0
+    set tempo-ate-prox-fruto random tempo-producao-frutos
     setxy random-xcor * 0.9 random-ycor * 0.9
-    ; evita colocar arvore onde tem comida e obstaculos
     while [pcolor = green or pcolor = yellow] [
       setxy random-xcor * 0.9 random-ycor * 0.9
     ]
@@ -286,9 +325,16 @@ to criar-arvores-iniciais
 end
 
 to grow-trees
-  ;; Fase 1: Envelhecimento e morte das árvores existentes
+  ;; Fase 1: Envelhecimento e produção de frutos
   ask arvores [
     set idade-arvore idade-arvore + 1
+    
+    ; Produz frutos periodicamente
+    set tempo-ate-prox-fruto tempo-ate-prox-fruto - 1
+    if tempo-ate-prox-fruto <= 0 and frutos < max-frutos-por-arvore [
+      set frutos frutos + 1
+      set tempo-ate-prox-fruto tempo-producao-frutos
+    ]
     
     ;; Árvores morrem quando muito velhas (idade > 100)
     if idade-arvore > 100 [
@@ -314,8 +360,36 @@ to grow-trees
         set role "arvore"
         set idade-arvore 0
         set size 2
+        set frutos 0
+        set tempo-ate-prox-fruto random tempo-producao-frutos
         move-to one-of candidatos  ; Posiciona em um local válido
       ]
+    ]
+  ]
+end
+
+to frutos-caidos
+  ask arvores with [frutos > 0] [
+    if random-float 1 < 0.05 [  ; 5% de chance de um fruto cair a cada tick
+      ask one-of patches in-radius 1 [  ; Cai em um patch adjacente
+        set food food + 1
+        set food-source-number 4  ; Identificador para frutos caídos
+        set tempo-fruto-caido 100  ;; Tempo de vida do fruto caído
+        set pcolor brown  ; Cor diferente para frutos caídos
+      ]
+      set frutos frutos - 1
+    ]
+  ]
+end
+
+to atualizar-frutos-caidos
+  ask patches with [food > 0 and food-source-number = 4] [
+    set tempo-fruto-caido tempo-fruto-caido - 1
+    if tempo-fruto-caido <= 0 [
+      set food 0
+      set food-source-number 0
+      set tempo-fruto-caido 0
+      recolor-patch
     ]
   ]
 end
@@ -329,7 +403,7 @@ end
 
 to aplicar-chuva
   set efeito-ambiente "úmido"
-  if random 50 < 3 and not nest? and food = 0  [
+  if random 100 < 3 and not nest? and food = 0 [
     set gota-ativa? true
     set frames-gota 1 + random 2
   ]
@@ -346,6 +420,7 @@ to recolor-patch
     if food-source-number = 1 [ set pcolor cyan stop ]
     if food-source-number = 2 [ set pcolor sky stop ]
     if food-source-number = 3 [ set pcolor blue stop ]
+    if food-source-number = 4 [ set pcolor brown stop ]  ; Frutos caídos
   ]
 
   if gota-ativa? [ set pcolor blue - 1 stop ]
@@ -360,6 +435,7 @@ to-report define-state-operarias
   let enemy-near? false
   let enemy-distance 0
   let carrying? [carregando] of self
+  let has-fruits? any? arvores-here with [frutos > 0]
 
   if any? enemy-turtles [
     let nearest-enemy min-one-of enemy-turtles [distance myself]
@@ -367,7 +443,7 @@ to-report define-state-operarias
     set enemy-distance distance nearest-enemy
   ]
 
-  report (word xcor "|" ycor "|" carrying? "|" enemy-near? "|" enemy-distance "|" health "|" [chemical] of patch-here)
+  report (word xcor "|" ycor "|" carrying? "|" enemy-near? "|" enemy-distance "|" health "|" [chemical] of patch-here "|" has-fruits?)
 end
 
 to-report define-state-soldados
@@ -466,6 +542,19 @@ to-report execute [ ants_agent action ]
   if action = "search_food" [
     move ants_agent
     if [role] of ants_agent = "operaria" and not [carregando] of ants_agent [
+      ; Pode coletar comida do chão ou frutos das árvores
+      if [food] of patch-here > 0 [
+        ask patch-here [ set food food - 1 ]
+        set carregando true
+        set reward reward + 50
+      ]
+      if any? arvores-here with [frutos > 0] [
+        ask one-of arvores-here with [frutos > 0] [
+          set frutos frutos - 1
+        ]
+        set carregando true
+        set reward reward + 70  ; Recompensa maior por coletar frutos
+      ]
       ask patch-here [ set chemical chemical + 60 ]
     ]
   ]
@@ -571,12 +660,6 @@ to move [ants_agents]
     lt random 40
     if not can-move? velocidade [ rt 180 ]
     fd velocidade
-
-    if role = "operaria" and not carregando and [food] of patch-here > 0 [
-      set carregando true
-      ask patch-here [ set food food - 1 ]
-      set reward reward + 50
-    ]
 
     check-bounds self
   ]
@@ -687,6 +770,7 @@ to check-bounds [ant]
     ]
   ]
 end
+
 
 ; ==================== NAVIGATION ====================
 to uphill-nest-scent
